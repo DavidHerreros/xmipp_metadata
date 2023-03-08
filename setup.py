@@ -25,7 +25,7 @@ with open('requirements.txt') as f:
 
 setup(
     name='xmipp_metadata',  # Required
-    version='1.0.1',  # Required
+    version='1.0.0',  # Required
     description='Package to handle Xmipp Metadata and image binary data',  # Required
     long_description=long_description,  # Optional
     url='https://github.com/DavidHerreros/xmipp_metadata',  # Optional

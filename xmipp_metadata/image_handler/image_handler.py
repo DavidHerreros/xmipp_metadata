@@ -30,7 +30,7 @@ from pathlib import Path
 import mrcfile
 from mrcfile.mrcmemmap import MrcMemmap
 
-from xmipp_metadata.image_handler import ImageSpider
+from .image_spider import ImageSpider
 
 
 class ImageHandler(object):

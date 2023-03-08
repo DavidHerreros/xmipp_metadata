@@ -23,3 +23,12 @@
 # *  e-mail address 'scipion@cnb.csic.es'
 # *
 # **************************************************************************
+
+
+import pwem
+
+
+__version__ = "1.0.0"
+
+class Plugin(pwem.Plugin):
+    pass

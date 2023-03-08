@@ -193,3 +193,9 @@ class XmippMetaData(object):
         :returns: The metadata labels associated with the column in the current metadata
         '''
         return list(self.table.columns)
+
+    def isMetaDataLabel(self, label):
+        '''
+        :returns: True or False depending on whether the metadata label is stored in the metadata
+        '''
+        return label in self.getMetaDataLabels()

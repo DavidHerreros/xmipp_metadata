@@ -46,7 +46,7 @@ def emtable_2_pandas(file_name):
         for key, value in row.items():
             if isinstance(value, str) and not "@" in value:
                 value = np.fromstring(value, sep=" ")
-                row[key] = np.asarray([",".join(item) for item in value.astype(str)])
-        pd_table.append(pd.DataFrame(row))
+                row[key] = ','.join([str(num) for num in value])
+        pd_table.append(pd.DataFrame([row]))
 
     return pd.concat(pd_table, ignore_index=True)

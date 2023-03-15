@@ -34,11 +34,19 @@ import pandas as pd
 import starfile
 
 from xmipp_metadata.image_handler.image_handler import ImageHandler
+from xmipp_metadata.utils import emtable_2_pandas
 
 
 class XmippMetaData(object):
     '''
     Class to handle and Xmipp MetaData file (and its binaries) in Python
+
+    Parameters:
+        :param file_name (string - Optional) --> Path to metadata file
+        :param readFrom (string - Optional) --> Can take values:
+            - Auto: Determine automatically the best way to read the file
+            - Pandas: Read the metadata file as a Pandas table
+            - EMTable: Read the metadata file as a EMTable, which will be converted to Pandas later
     '''
 
     DEFAULT_COLUMN_NAMES = ['anglePsi', 'angleRot', 'angleTilt', 'ctfVoltage', 'ctfDefocusU',
@@ -47,9 +55,18 @@ class XmippMetaData(object):
                             'scoreByVariance', 'scoreByGiniCoeff', 'shiftX', 'shiftY', 'shiftZ',
                             'xcoor', 'ycoor']
 
-    def __init__(self, file_name):
+    def __init__(self, file_name, readFrom="Auto"):
         if file_name:
-            self.table = starfile.read(file_name)
+            if readFrom == "Auto":
+                try:
+                    self.table = starfile.read(file_name)
+                except ValueError:
+                    self.table = emtable_2_pandas(file_name)
+            elif readFrom == "Pandas":
+                self.table = starfile.read(file_name)
+            elif readFrom == "EMTable":
+                self.table = emtable_2_pandas(file_name)
+
             binary_file = self.getMetadataItems(0, 'image')
             binary_file = Path(binary_file[0].split('@')[-1])
 

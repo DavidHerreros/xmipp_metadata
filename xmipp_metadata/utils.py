@@ -24,4 +24,29 @@
 # *
 # **************************************************************************
 
-__version__ = "1.0.4"
+
+import os
+import numpy as np
+from emtable import Table
+import pandas as pd
+
+
+def emtable_2_pandas(file_name):
+    """Convert an EMTable object to a Pandas dataframe to be used by XmippMetaData class"""
+
+    # Read EMTable
+    table = Table(fileName=file_name)
+
+    # Init Pandas table
+    pd_table = []
+
+    # Iter rows and set data
+    for row in table:
+        row = row._asdict()
+        for key, value in row.items():
+            if isinstance(value, str) and not "@" in value:
+                value = np.fromstring(value, sep=" ")
+                row[key] = np.asarray([",".join(item) for item in value.astype(str)])
+        pd_table.append(pd.DataFrame(row))
+
+    return pd.concat(pd_table, ignore_index=True)

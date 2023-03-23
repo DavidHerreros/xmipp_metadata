@@ -106,9 +106,9 @@ class ImageSpider(object):
         self.TYPE = "stack" if header[0] == 1.0 else "volume"
 
         if self.TYPE == "stack":
-            header = dict(img_size=int(header[4]), n_images=int(header[10]))
+            header = dict(img_size=int(header[4]), n_images=int(header[10]), offset=int(header[6]))
         else:
-            header = dict(img_size=int(header[4]), n_images=int(header[4]))
+            header = dict(img_size=int(header[4]), n_images=int(header[4]), offset=int(header[6]))
         return header
 
     def read_image(self, iid):
@@ -119,9 +119,9 @@ class ImageSpider(object):
         '''
 
         if self.TYPE == "stack":
-            start = 2 * self.HEADER_OFFSET + iid * (self.IMG_BYTES + self.HEADER_OFFSET)
+            start = 2 * self.header_info["offset"] + iid * (self.IMG_BYTES + self.header_info["offset"])
         else:
-            start = self.HEADER_OFFSET + iid * self.IMG_BYTES
+            start = self.header_info["offset"] + iid * self.IMG_BYTES
 
         img_size = self.header_info["img_size"]
         return self.read_numpy(start, self.IMG_BYTES).reshape([img_size, img_size])

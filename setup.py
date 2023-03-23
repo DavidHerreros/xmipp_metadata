@@ -10,6 +10,7 @@ from setuptools import setup, find_packages
 # To use a consistent encoding
 from codecs import open
 from os import path
+from xmipp_metadata import __version__
 
 here = path.abspath(path.dirname(__file__))
 
@@ -25,7 +26,7 @@ with open('requirements.txt') as f:
 
 setup(
     name='xmipp_metadata',  # Required
-    version='1.0.4',  # Required
+    version=__version__,  # Required
     description='Package to handle Xmipp Metadata and image binary data',  # Required
     long_description=long_description,  # Optional
     url='https://github.com/DavidHerreros/xmipp_metadata',  # Optional

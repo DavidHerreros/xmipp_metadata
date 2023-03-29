@@ -120,14 +120,27 @@ class ImageHandler(object):
                                self.BINARIES.header["ny"],
                                self.BINARIES.header["nx"]])
 
-    def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None):
+    def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None,
+                     isStack=False):
         self.read(inputFn)
         data = np.squeeze(self.getData())
 
         if finalDimension is None:
-            data = rescale(data, scaleFactor)
+            if isStack:
+                aux = []
+                for slice in data:
+                    aux.append(rescale(slice, scaleFactor))
+                data = np.asarray(aux)
+            else:
+                data = rescale(data, scaleFactor)
         else:
-            data = resize(data, finalDimension)
+            if isStack:
+                aux = []
+                for slice in data:
+                    aux.append(resize(slice, finalDimension))
+                data = np.asarray(aux)
+            else:
+                data = resize(data, finalDimension)
 
         self.write(data, outputFn)
 

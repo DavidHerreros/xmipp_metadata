@@ -95,6 +95,12 @@ ih = ImageHandler("scaled_particles.stk")
 dims_stk = ih.getDimensions()
 
 
+# Scale stack (STK)
+ih.scaleSplines("scaled_particles.stk",
+                os.path.join("test_outputs", "test_stack_scaled.stk"),
+                scaleFactor=2.0, isStack=True)
+
+
 # Scale image (STK)
 ih.scaleSplines(os.path.join("test_outputs", "test.stk"),
                 os.path.join("test_outputs", "test_scaled.stk"),

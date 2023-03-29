@@ -25,7 +25,9 @@
 # **************************************************************************
 
 
+import struct
 import numpy as np
+from pathlib import Path
 
 
 class ImageSpider(object):
@@ -125,6 +127,92 @@ class ImageSpider(object):
 
         img_size = self.header_info["img_size"]
         return self.read_numpy(start, self.IMG_BYTES).reshape([img_size, img_size])
+
+    def write(self, data, filename=None, overwrite=False):
+        data = data.astype(np.float32)
+
+        if filename:
+            mode = Path(filename).suffix
+            fid = open(filename, "wb")
+            if len(data.shape) == 3:
+                # Write first header
+                header = self.makeSpiderHeader(data, mode=mode)
+                fid.writelines(header)
+
+                # Write slices
+                for slice in data:
+                    if mode == ".stk":
+                        header = self.makeSpiderHeader(slice[None, ...], mode=mode)
+                        fid.writelines(header)
+                    fid.writelines(slice)
+            else:
+                mode = ".vol"
+                # Write image
+                header = self.makeSpiderHeader(data[None, ...], mode=mode)
+                fid.writelines(header)
+                fid.writelines(data)
+            fid.close()
+        else:
+            filename = self.stk_handler.name
+            mode = Path(filename).suffix
+            if data.shape[0] == len(self) or overwrite:
+                fid = open(filename, "wb")
+                if len(data.shape) == 3:
+                    # Write first header
+                    header = self.makeSpiderHeader(data, mode=mode)
+                    fid.writelines(header)
+
+                    # Write slices
+                    for slice in data:
+                        if mode == ".stk":
+                            header = self.makeSpiderHeader(slice[None, ...], mode=mode)
+                            fid.writelines(header)
+                        fid.writelines(slice)
+                else:
+                    mode = ".vol"
+                    # Write image
+                    header = self.makeSpiderHeader(data[None, ...], mode=mode)
+                    fid.writelines(header)
+                    fid.writelines(data)
+                fid.close()
+            else:
+                raise Exception("Cannot save file. Number of images "
+                                "in new data is different. Please, set overwrite to True "
+                                "if you are sure you want to do this.")
+
+    def makeSpiderHeader(self, im, mode):
+        n_slice, nsam, nrow = im.shape
+        lenbyt = nsam * 4  # There are labrec records in the header
+        labrec = int(2400 / lenbyt)
+        if 2400 % lenbyt != 0:
+            labrec += 1
+        labbyt = labrec * lenbyt
+        nvalues = int(labbyt / 4)
+        if nvalues < 23:
+            return []
+
+        hdr = []
+        for i in range(nvalues):
+            hdr.append(0.0)
+
+        # NB these are Fortran indices
+        hdr[1] = float(n_slice) if mode == ".vol" else 1.0  # nslice (=1 for an image)
+        hdr[2] = float(nrow)  # number of rows per slice
+        hdr[3] = float(nrow)  # number of records in the image
+        hdr[5] = 1.0  # iform for 2D image
+        hdr[12] = float(nsam)  # number of pixels per line
+        hdr[13] = float(labrec)  # number of records in file header
+        hdr[22] = float(labbyt)  # total number of bytes in header
+        hdr[23] = float(lenbyt)  # record length in bytes
+        hdr[24] = 2.0 if mode == ".stk" else 0.0
+        hdr[25] = 1.0 if mode == ".stk" else 0.0
+        hdr[26] = float(n_slice) if mode == ".stk" else 1.0  # nobjects (=1 for an image/vol)
+
+        # adjust for Fortran indexing
+        hdr = hdr[1:]
+        hdr.append(0.0)
+        # pack binary data into a string
+        return [struct.pack("f", v) for v in hdr]
 
     def close(self):
         '''

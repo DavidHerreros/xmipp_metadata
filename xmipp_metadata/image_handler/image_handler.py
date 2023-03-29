@@ -27,6 +27,8 @@
 
 from pathlib import Path
 
+import numpy as np
+
 import mrcfile
 from mrcfile.mrcmemmap import MrcMemmap
 
@@ -46,12 +48,12 @@ class ImageHandler(object):
 
     def __init__(self, binary_file=None):
         if binary_file:
-            binary_file = Path(binary_file)
+            self.binary_file = Path(binary_file)
 
-            if binary_file.suffix == ".mrc":
-                self.BINARIES = mrcfile.mmap(binary_file, mode='r+')
-            elif binary_file.suffix == ".stk" or binary_file.suffix == ".vol":
-                self.BINARIES = ImageSpider(binary_file)
+            if self.binary_file.suffix == ".mrc":
+                self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
+            elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol":
+                self.BINARIES = ImageSpider(self.binary_file)
 
     def __getitem__(self, item):
         if isinstance(self.BINARIES, MrcMemmap):
@@ -77,10 +79,26 @@ class ImageHandler(object):
         if self.BINARIES:
             self.close()
 
-        if binary_file.suffix == ".mrc":
-            self.BINARIES = mrcfile.mmap(binary_file, mode='r+')
-        elif binary_file.suffix == ".stk":
-            self.BINARIES = ImageSpider(binary_file)
+        self.binary_file = Path(binary_file)
+
+        if self.binary_file.suffix == ".mrc":
+            self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
+        elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol":
+            self.BINARIES = ImageSpider(self.binary_file)
+
+    def write(self, data, filename=None, overwrite=False):
+        if not overwrite and len(self) != data.shape[0] and filename is None:
+            raise Exception("Cannot save file. Number of images "
+                            "in new data is different. Please, set overwrite to True "
+                            "if you are sure you want to do this.")
+
+        filename = self.binary_file if filename is None else Path(filename)
+
+        if filename.suffix == ".mrc":
+            with mrcfile.new(filename, overwrite=True) as mrc:
+                mrc.set_data(data.astype(np.float32))
+        elif filename.suffix == ".stk" or filename.suffix == ".vol":
+            self.BINARIES.write(data, filename)
 
     def close(self):
         '''

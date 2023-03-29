@@ -43,7 +43,6 @@ class ImageEM(object):
         '''
         Close the current file before deleting
         '''
-        self.close()
         print("File closed succesfully!")
 
     def __len__(self):
@@ -68,12 +67,3 @@ class ImageEM(object):
 
     def write(self, data, filename, overwrite=False):
         emfile.write(filename, data, overwrite=overwrite)
-
-    def close(self):
-        '''
-        Closes the current file
-        '''
-        if self.header is not None:
-            del self.header
-        if self.data is not None:
-            del self.data

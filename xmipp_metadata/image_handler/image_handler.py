@@ -108,7 +108,7 @@ class ImageHandler(object):
         return self
 
     def write(self, data, filename=None, overwrite=False):
-        if overwrite and filename is None and len(self) != data.shape[0]:
+        if not overwrite and filename is None and len(self) != data.shape[0]:
             raise Exception("Cannot save file. Number of images "
                             "in new data is different. Please, set overwrite to True "
                             "if you are sure you want to do this.")
@@ -176,7 +176,3 @@ class ImageHandler(object):
         '''
         if isinstance(self.BINARIES, ImageSpider):
             self.BINARIES.close()
-        elif isinstance(self.BINARIES, ImageEM):
-            self.BINARIES.close()
-        elif isinstance(self.BINARIES, MrcMemmap):
-            del self.BINARIES

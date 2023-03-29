@@ -27,6 +27,8 @@
 
 import numpy as np
 
+import os
+
 from pathlib import Path
 
 import pandas as pd
@@ -116,11 +118,40 @@ class XmippMetaData(object):
         for label in remain:
             self.table[label] = 0.0
 
-    def write(self, file_name, overwrite=False):
+    def write(self, filename, overwrite=False):
         '''
         Write current metadata to file
         '''
-        starfile.write(self.table, file_name, overwrite=overwrite)
+        # Filename path
+        filename_path = Path(filename).resolve().parent
+
+        # Image path
+        def composeImageRelPath(image, relative_to):
+            # Check if path has the form index@path
+            try:
+                index, file = image.split("@")
+            except ValueError as e:
+                index, file = "", image
+
+            # Image absolute path
+            if not os.path.isabs(file):
+                file = os.path.abspath(file)
+
+            # Get new relative path
+            file = Path(file).resolve()
+            file = os.path.relpath(file, start=relative_to)
+
+            # Recompose path
+            if index:
+                image = index + "@" + file
+
+            return image
+
+        for idx in range(len(self)):
+            image = self.getMetadataItems(idx, "image")[0]
+            image = composeImageRelPath(image, filename_path)
+            self.setMetaDataItems(image, idx, "image")
+        starfile.write(self.table, filename, overwrite=overwrite)
 
     def __del__(self):
         '''

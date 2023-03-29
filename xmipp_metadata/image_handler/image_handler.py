@@ -83,7 +83,8 @@ class ImageHandler(object):
             return 0
 
     def __del__(self):
-        self.BINARIES.close()
+        if self.BINARIES is not None:
+            self.BINARIES.close()
         print("File closed succesfully!")
 
     def read(self, binary_file):
@@ -175,3 +176,7 @@ class ImageHandler(object):
         '''
         if isinstance(self.BINARIES, ImageSpider):
             self.BINARIES.close()
+        elif isinstance(self.BINARIES, ImageEM):
+            self.BINARIES.close()
+        elif isinstance(self.BINARIES, MrcMemmap):
+            del self.BINARIES

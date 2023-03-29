@@ -82,17 +82,27 @@ ih.write(img, filename=os.path.join("test_outputs", "test_stack.stk"))
 ih.write(img, filename=os.path.join("test_outputs", "test.vol"))
 
 
-# Convert
+# Convert (STK to MRCS)
 ih.convert("scaled_particles.stk", os.path.join("test_outputs", "scaled_particles.mrcs"))
+
+
+# Convert (STK to EMS)
+ih.convert("scaled_particles.stk", os.path.join("test_outputs", "scaled_particles.ems"))
 
 
 # Get dimensions (MRC)
 ih.read(os.path.join("test_outputs", "scaled_particles.mrcs"))
 dims_mrc = ih.getDimensions()
 
+
 # Get dimensions (STK)
-ih = ImageHandler("scaled_particles.stk")
+ih.read("scaled_particles.stk")
 dims_stk = ih.getDimensions()
+
+
+# Get dimensions (EMS)
+ih.read(os.path.join("test_outputs", "scaled_particles.ems"))
+dims_ems = ih.getDimensions()
 
 
 # Scale stack (STK)

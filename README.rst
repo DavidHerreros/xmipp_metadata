@@ -12,3 +12,4 @@ Included functionalities
 - **ImageHandler** class: Reading and writing of image binaries stored in the metadata. It support the following formats:
     - MRC files (reading and writing) for stacks and volumes (.mrcs and .mrc)
     - Spider files (reading and writing) for stacks and volumes (.stk and .vol)
+    - EM files (reading and writing) for stack and images (.ems and .em)

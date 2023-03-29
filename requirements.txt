@@ -3,3 +3,4 @@ pandas
 starfile
 mrcfile
 emtable
+scikit-image

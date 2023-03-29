@@ -29,6 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
+from skimage.transform import rescale, resize
+
 import mrcfile
 from mrcfile.mrcmemmap import MrcMemmap
 
@@ -50,7 +52,7 @@ class ImageHandler(object):
         if binary_file:
             self.binary_file = Path(binary_file)
 
-            if self.binary_file.suffix == ".mrc":
+            if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
                 self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
             elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol":
                 self.BINARIES = ImageSpider(self.binary_file)
@@ -81,7 +83,7 @@ class ImageHandler(object):
 
         self.binary_file = Path(binary_file)
 
-        if self.binary_file.suffix == ".mrc":
+        if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
             self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
         elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol":
             self.BINARIES = ImageSpider(self.binary_file)
@@ -94,11 +96,40 @@ class ImageHandler(object):
 
         filename = self.binary_file if filename is None else Path(filename)
 
-        if filename.suffix == ".mrc":
+        if filename.suffix == ".mrc" or filename.suffix == ".mrcs":
             with mrcfile.new(filename, overwrite=True) as mrc:
                 mrc.set_data(data.astype(np.float32))
         elif filename.suffix == ".stk" or filename.suffix == ".vol":
             self.BINARIES.write(data, filename)
+
+    def convert(self, orig_file, dest_file):
+        self.read(orig_file)
+        data = self.getData()
+        self.write(data, dest_file)
+
+    def getData(self):
+        return self[:]
+
+    def getDimensions(self):
+        if isinstance(self.BINARIES, ImageSpider):
+            return np.asarray([self.BINARIES.header_info["n_slices"],
+                               self.BINARIES.header_info["n_rows"],
+                               self.BINARIES.header_info["n_columns"]])
+        elif isinstance(self.BINARIES, MrcMemmap):
+            return np.asarray([self.BINARIES.header["nz"],
+                               self.BINARIES.header["ny"],
+                               self.BINARIES.header["nx"]])
+
+    def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None):
+        self.read(inputFn)
+        data = np.squeeze(self.getData())
+
+        if finalDimension is None:
+            data = rescale(data, scaleFactor)
+        else:
+            data = resize(data, finalDimension)
+
+        self.write(data, outputFn)
 
     def close(self):
         '''

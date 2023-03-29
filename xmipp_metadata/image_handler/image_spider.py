@@ -42,7 +42,7 @@ class ImageSpider(object):
     def __init__(self, filename):
         self.stk_handler = open(filename, "rb")
         self.header_info = self.read_header()
-        self.IMG_BYTES = self.FLOAT32_BYTES * self.header_info["img_size"] ** 2
+        self.IMG_BYTES = self.FLOAT32_BYTES * self.header_info["n_columns"] ** 2
 
     def __del__(self):
         '''
@@ -52,7 +52,10 @@ class ImageSpider(object):
         print("File closed succesfully!")
 
     def __len__(self):
-        return self.header_info["n_images"]
+        if self.TYPE == "stack":
+            return self.header_info["n_images"]
+        elif self.TYPE == "volume":
+            return self.header_info["n_slices"]
 
     def __iter__(self):
         '''
@@ -104,13 +107,12 @@ class ImageSpider(object):
             :returns The current header as a dictionary
         '''
         header = self.read_numpy(0, self.HEADER_OFFSET)
-        header = header[header != 0.0]
-        self.TYPE = "stack" if header[0] == 1.0 else "volume"
 
-        if self.TYPE == "stack":
-            header = dict(img_size=int(header[4]), n_images=int(header[10]), offset=int(header[6]))
-        else:
-            header = dict(img_size=int(header[4]), n_images=int(header[4]), offset=int(header[6]))
+        header = dict(img_size=int(header[1]), n_images=int(header[25]), offset=int(header[21]),
+                      n_rows=int(header[1]), n_columns=int(header[11]), n_slices=int(header[0]))
+
+        self.TYPE = "stack" if header["n_images"] > 1 else "volume"
+
         return header
 
     def read_image(self, iid):
@@ -125,7 +127,7 @@ class ImageSpider(object):
         else:
             start = self.header_info["offset"] + iid * self.IMG_BYTES
 
-        img_size = self.header_info["img_size"]
+        img_size = self.header_info["n_columns"]
         return self.read_numpy(start, self.IMG_BYTES).reshape([img_size, img_size])
 
     def write(self, data, filename=None, overwrite=False):
@@ -148,7 +150,8 @@ class ImageSpider(object):
             else:
                 mode = ".vol"
                 # Write image
-                header = self.makeSpiderHeader(data[None, ...], mode=mode)
+                data = data[None, ...] if len(data.shape) == 2 else data
+                header = self.makeSpiderHeader(data, mode=mode)
                 fid.writelines(header)
                 fid.writelines(data)
             fid.close()
@@ -171,7 +174,8 @@ class ImageSpider(object):
                 else:
                     mode = ".vol"
                     # Write image
-                    header = self.makeSpiderHeader(data[None, ...], mode=mode)
+                    data = data[None, ...] if len(data.shape) == 2 else data
+                    header = self.makeSpiderHeader(data, mode=mode)
                     fid.writelines(header)
                     fid.writelines(data)
                 fid.close()
@@ -183,8 +187,8 @@ class ImageSpider(object):
     def makeSpiderHeader(self, im, mode):
         n_slice, nsam, nrow = im.shape
         lenbyt = nsam * 4  # There are labrec records in the header
-        labrec = int(2400 / lenbyt)
-        if 2400 % lenbyt != 0:
+        labrec = int(1024 / lenbyt)
+        if 1024 % lenbyt != 0:
             labrec += 1
         labbyt = labrec * lenbyt
         nvalues = int(labbyt / 4)
@@ -199,7 +203,7 @@ class ImageSpider(object):
         hdr[1] = float(n_slice) if mode == ".vol" else 1.0  # nslice (=1 for an image)
         hdr[2] = float(nrow)  # number of rows per slice
         hdr[3] = float(nrow)  # number of records in the image
-        hdr[5] = 1.0  # iform for 2D image
+        hdr[5] = 1.0 if mode == ".stk" else 3.0
         hdr[12] = float(nsam)  # number of pixels per line
         hdr[13] = float(labrec)  # number of records in file header
         hdr[22] = float(labbyt)  # total number of bytes in header

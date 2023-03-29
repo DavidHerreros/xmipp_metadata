@@ -80,3 +80,28 @@ ih.write(img, filename=os.path.join("test_outputs", "test_stack.stk"))
 
 # Write volume (VOL)
 ih.write(img, filename=os.path.join("test_outputs", "test.vol"))
+
+
+# Convert
+ih.convert("scaled_particles.stk", os.path.join("test_outputs", "scaled_particles.mrcs"))
+
+
+# Get dimensions (MRC)
+ih.read(os.path.join("test_outputs", "scaled_particles.mrcs"))
+dims_mrc = ih.getDimensions()
+
+# Get dimensions (STK)
+ih = ImageHandler("scaled_particles.stk")
+dims_stk = ih.getDimensions()
+
+
+# Scale image (STK)
+ih.scaleSplines(os.path.join("test_outputs", "test.stk"),
+                os.path.join("test_outputs", "test_scaled.stk"),
+                scaleFactor=2.0)
+
+
+# Scale volume (VOL)
+ih.scaleSplines("AK.vol",
+                os.path.join("test_outputs", "test_scaled.vol"),
+                finalDimension=[128, 128, 128])

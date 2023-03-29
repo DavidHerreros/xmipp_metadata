@@ -52,6 +52,11 @@ class ImageHandler(object):
 
     def __init__(self, binary_file=None):
         if binary_file:
+            if ":mrcs" in binary_file:
+                binary_file = binary_file.replace(":mrcs", "")
+            elif ":mrc" in binary_file:
+                binary_file = binary_file.replace(":mrc", "")
+
             self.binary_file = Path(binary_file)
 
             if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
@@ -94,6 +99,11 @@ class ImageHandler(object):
         '''
         if self.BINARIES:
             self.close()
+
+        if ":mrcs" in binary_file:
+            binary_file = binary_file.replace(":mrcs", "")
+        elif ":mrc" in binary_file:
+            binary_file = binary_file.replace(":mrc", "")
 
         self.binary_file = Path(binary_file)
 

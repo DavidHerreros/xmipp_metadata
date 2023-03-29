@@ -69,12 +69,18 @@ class ImageHandler(object):
             return self.BINARIES[item].copy()
         elif isinstance(self.BINARIES, ImageEM):
             return self.BINARIES.data[item].copy()
+        else:
+            return None
 
     def __len__(self):
         if isinstance(self.BINARIES, ImageSpider):
             return len(self.BINARIES)
         elif isinstance(self.BINARIES, MrcMemmap):
             return self.BINARIES.header["nz"]
+        elif isinstance(self.BINARIES, ImageEM):
+            return self.BINARIES.header["zdim"]
+        else:
+            return 0
 
     def __del__(self):
         self.BINARIES.close()
@@ -101,7 +107,7 @@ class ImageHandler(object):
         return self
 
     def write(self, data, filename=None, overwrite=False):
-        if not overwrite and len(self) != data.shape[0] and filename is None:
+        if overwrite and filename is None and len(self) != data.shape[0]:
             raise Exception("Cannot save file. Number of images "
                             "in new data is different. Please, set overwrite to True "
                             "if you are sure you want to do this.")

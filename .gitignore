@@ -6,3 +6,6 @@
 
 # IDE files
 .idea
+
+# Test outputs
+xmipp_metadata/tests/data/test_outputs*

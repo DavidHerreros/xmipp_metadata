@@ -98,6 +98,8 @@ class ImageHandler(object):
         elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
             self.BINARIES = ImageEM(self.binary_file)
 
+        return self
+
     def write(self, data, filename=None, overwrite=False):
         if not overwrite and len(self) != data.shape[0] and filename is None:
             raise Exception("Cannot save file. Number of images "

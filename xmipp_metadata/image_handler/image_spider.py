@@ -39,10 +39,13 @@ class ImageSpider(object):
     FLOAT32_BYTES = 4
     TYPE = None
 
-    def __init__(self, filename):
-        self.stk_handler = open(filename, "rb")
-        self.header_info = self.read_header()
-        self.IMG_BYTES = self.FLOAT32_BYTES * self.header_info["n_columns"] ** 2
+    def __init__(self, filename=None):
+        if filename:
+            self.stk_handler = open(filename, "rb")
+            self.header_info = self.read_header()
+            self.IMG_BYTES = self.FLOAT32_BYTES * self.header_info["n_columns"] ** 2
+        else:
+            self.stk_handler, self.header_info, self.IMG_BYTES = None, None, None
 
     def __del__(self):
         '''
@@ -74,6 +77,15 @@ class ImageSpider(object):
             stop = item.stop if item.stop else len(self)
             step = item.step if item.step else 1
             return np.stack([self.read_image(ii) for ii in range(start, stop, step)])
+
+    def read(self, filename):
+        '''
+        Reads a given image
+           :param filename (str) --> Image to be read
+        '''
+        self.stk_handler = open(filename, "rb")
+        self.header_info = self.read_header()
+        self.IMG_BYTES = self.FLOAT32_BYTES * self.header_info["n_columns"] ** 2
 
     def read_binary(self, start, end):
         '''
@@ -222,4 +234,5 @@ class ImageSpider(object):
         '''
         Closes the current file
         '''
-        self.stk_handler.close()
+        if self.stk_handler is not None:
+            self.stk_handler.close()

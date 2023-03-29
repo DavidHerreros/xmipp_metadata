@@ -36,6 +36,8 @@ from mrcfile.mrcmemmap import MrcMemmap
 
 from .image_spider import ImageSpider
 
+from .image_em import ImageEM
+
 
 class ImageHandler(object):
     '''
@@ -54,14 +56,19 @@ class ImageHandler(object):
 
             if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
                 self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
-            elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol":
+            elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
+                    or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
                 self.BINARIES = ImageSpider(self.binary_file)
+            elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
+                self.BINARIES = ImageEM(self.binary_file)
 
     def __getitem__(self, item):
         if isinstance(self.BINARIES, MrcMemmap):
             return self.BINARIES.data[item].copy()
         elif isinstance(self.BINARIES, ImageSpider):
             return self.BINARIES[item].copy()
+        elif isinstance(self.BINARIES, ImageEM):
+            return self.BINARIES.data[item].copy()
 
     def __len__(self):
         if isinstance(self.BINARIES, ImageSpider):
@@ -85,8 +92,11 @@ class ImageHandler(object):
 
         if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
             self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
-        elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol":
+        elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
+                or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
             self.BINARIES = ImageSpider(self.binary_file)
+        elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
+            self.BINARIES = ImageEM(self.binary_file)
 
     def write(self, data, filename=None, overwrite=False):
         if not overwrite and len(self) != data.shape[0] and filename is None:
@@ -99,8 +109,11 @@ class ImageHandler(object):
         if filename.suffix == ".mrc" or filename.suffix == ".mrcs":
             with mrcfile.new(filename, overwrite=True) as mrc:
                 mrc.set_data(data.astype(np.float32))
-        elif filename.suffix == ".stk" or filename.suffix == ".vol":
-            self.BINARIES.write(data, filename)
+        elif filename.suffix == ".stk" or filename.suffix == ".vol" \
+                or filename.suffix == ".xmp" or filename.suffix == ".spi":
+            ImageSpider().write(data, filename, overwrite=overwrite)
+        elif filename.suffix == ".em" or filename.suffix == ".ems":
+            ImageEM().write(data, filename, overwrite=overwrite)
 
     def convert(self, orig_file, dest_file):
         self.read(orig_file)
@@ -119,6 +132,10 @@ class ImageHandler(object):
             return np.asarray([self.BINARIES.header["nz"],
                                self.BINARIES.header["ny"],
                                self.BINARIES.header["nx"]])
+        elif isinstance(self.BINARIES, ImageEM):
+            return np.asarray([self.BINARIES.header["zdim"],
+                               self.BINARIES.header["ydim"],
+                               self.BINARIES.header["xdim"]])
 
     def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None,
                      isStack=False):

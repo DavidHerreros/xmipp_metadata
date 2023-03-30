@@ -88,7 +88,7 @@ class ImageHandler(object):
             return 0
 
     def __del__(self):
-        if self.BINARIES is not None:
+        if self.BINARIES is not None and isinstance(self.BINARIES, ImageSpider):
             self.BINARIES.close()
         print("File closed succesfully!")
 

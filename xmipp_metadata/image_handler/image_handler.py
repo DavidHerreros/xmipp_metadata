@@ -170,12 +170,22 @@ class ImageHandler(object):
             else:
                 data = rescale(data, scaleFactor)
         else:
+            # First check if dimesions are ok
+            if isinstance(finalDimension, list) and len(finalDimension) != len(data.shape):
+                raise ValueError(f"Resize dimensions do not match. You provided "
+                                 f"{len(finalDimension)} dimensions, but data has "
+                                 f"{len(data.shape)} dimensions")
+
             if isStack:
                 aux = []
+                if isinstance(finalDimension, int):
+                    finalDimension = finalDimension * np.ones(len(data[0].shape))
                 for slice in data:
                     aux.append(resize(slice, finalDimension))
                 data = np.asarray(aux)
             else:
+                if isinstance(finalDimension, int):
+                    finalDimension = finalDimension * np.ones(len(data.shape))
                 data = resize(data, finalDimension)
 
         self.write(data, outputFn)

@@ -121,3 +121,25 @@ ih.scaleSplines(os.path.join("test_outputs", "test.stk"),
 ih.scaleSplines("AK.vol",
                 os.path.join("test_outputs", "test_scaled.vol"),
                 finalDimension=[128, 128, 128])
+
+
+# Scale stack (STK) with single int
+ih.scaleSplines("scaled_particles.stk",
+                os.path.join("test_outputs", "test_stack_scaled_int.stk"),
+                finalDimension=128, isStack=True)
+
+
+# Scale volume (VOL) with single int
+ih.scaleSplines("AK.vol",
+                os.path.join("test_outputs", "test_scaled_int.vol"),
+                finalDimension=128)
+
+
+# Check resize error due to wrong dimensions
+# Raise error due to wrong overwrite
+try:
+    ih.scaleSplines("AK.vol",
+                    os.path.join("test_outputs", "test_scaled_int.vol"),
+                    finalDimension=[128, 128])
+except Exception as e:
+    print("Error raised correctly!")

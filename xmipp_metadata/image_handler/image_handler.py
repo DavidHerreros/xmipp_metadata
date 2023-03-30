@@ -118,26 +118,27 @@ class ImageHandler(object):
 
         return self
 
-    def write(self, data, filename=None, overwrite=False):
+    def write(self, data, filename=None, overwrite=False, sr=1.0):
         if not overwrite and filename is None and len(self) != data.shape[0]:
             raise Exception("Cannot save file. Number of images "
                             "in new data is different. Please, set overwrite to True "
                             "if you are sure you want to do this.")
 
         filename = self.binary_file if filename is None else Path(filename)
+        sr = 1.0 if sr == 0.0 else sr
 
         if filename.suffix == ".mrc" or filename.suffix == ".mrcs":
-            ImageMRC().write(data, filename, overwrite=overwrite)
+            ImageMRC().write(data, filename, overwrite=overwrite, sr=sr)
         elif filename.suffix == ".stk" or filename.suffix == ".vol" \
                 or filename.suffix == ".xmp" or filename.suffix == ".spi":
-            ImageSpider().write(data, filename, overwrite=overwrite)
+            ImageSpider().write(data, filename, overwrite=overwrite, sr=sr)
         elif filename.suffix == ".em" or filename.suffix == ".ems":
-            ImageEM().write(data, filename, overwrite=overwrite)
+            ImageEM().write(data, filename, overwrite=overwrite, sr=sr)
 
     def convert(self, orig_file, dest_file):
         self.read(orig_file)
         data = self.getData()
-        self.write(data, dest_file)
+        self.write(data, dest_file, sr=self.getSamplingRate())
 
     def getData(self):
         return self[:]
@@ -155,6 +156,12 @@ class ImageHandler(object):
             return np.asarray([self.BINARIES.header["zdim"],
                                self.BINARIES.header["ydim"],
                                self.BINARIES.header["xdim"]])
+
+    def getSamplingRate(self):
+        if self.BINARIES is not None:
+            return self.BINARIES.getSamplingRate()
+        else:
+            return None
 
     def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None,
                      isStack=False):
@@ -188,7 +195,31 @@ class ImageHandler(object):
                     finalDimension = finalDimension * np.ones(len(data.shape))
                 data = resize(data, finalDimension)
 
-        self.write(data, outputFn)
+        scaleFactor = finalDimension[0] / data.shape[0] if scaleFactor is None else scaleFactor
+        new_sr = self.getSamplingRate() / scaleFactor
+
+        self.write(data, outputFn, sr=new_sr)
+
+    def createCircularMask(self, outputFile, boxSize=None, radius=None, center=None, is3D=True,
+                           sr=1.0):
+        if boxSize is None and radius is None:
+            raise ValueError("At least boxSize or radius should be set.")
+
+        boxSize = int(2 * radius) if boxSize is None else boxSize
+        radius = 0.5 * boxSize if radius is None else radius
+        center = (radius, radius) if center is None else center
+
+        # Create circular mask
+        if is3D:
+            Z, Y, X = np.ogrid[:boxSize, :boxSize, :boxSize]
+            dist_from_center = np.sqrt((X - center[0]) ** 2 + (Y - center[1]) ** 2 + (Z - center[1]) ** 2)
+        else:
+            Y, X = np.ogrid[:boxSize, :boxSize]
+            dist_from_center = np.sqrt((X - center[0]) ** 2 + (Y - center[1]) ** 2)
+
+        mask = dist_from_center <= radius
+
+        self.write(mask, outputFile, overwrite=True, sr=sr)
 
     def close(self):
         '''

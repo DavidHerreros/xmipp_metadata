@@ -121,7 +121,8 @@ class ImageSpider(object):
         header = self.read_numpy(0, self.HEADER_OFFSET)
 
         header = dict(img_size=int(header[1]), n_images=int(header[25]), offset=int(header[21]),
-                      n_rows=int(header[1]), n_columns=int(header[11]), n_slices=int(header[0]))
+                      n_rows=int(header[1]), n_columns=int(header[11]), n_slices=int(header[0]),
+                      sr=float(header[20]))
 
         self.TYPE = "stack" if header["n_images"] > 1 else "volume"
 
@@ -142,28 +143,29 @@ class ImageSpider(object):
         img_size = self.header_info["n_columns"]
         return self.read_numpy(start, self.IMG_BYTES).reshape([img_size, img_size])
 
-    def write(self, data, filename=None, overwrite=False):
+    def write(self, data, filename=None, overwrite=False, sr=1.0):
         data = data.astype(np.float32)
+        sr = 1.0 if sr == 0.0 else sr
 
         if filename:
             mode = Path(filename).suffix
             fid = open(filename, "wb")
             if len(data.shape) == 3:
                 # Write first header
-                header = self.makeSpiderHeader(data, mode=mode)
+                header = self.makeSpiderHeader(data, mode=mode, sr=sr)
                 fid.writelines(header)
 
                 # Write slices
                 for slice in data:
                     if mode == ".stk":
-                        header = self.makeSpiderHeader(slice[None, ...], mode=mode)
+                        header = self.makeSpiderHeader(slice[None, ...], mode=mode, sr=sr)
                         fid.writelines(header)
                     fid.writelines(slice)
             else:
                 mode = ".vol"
                 # Write image
                 data = data[None, ...] if len(data.shape) == 2 else data
-                header = self.makeSpiderHeader(data, mode=mode)
+                header = self.makeSpiderHeader(data, mode=mode, sr=sr)
                 fid.writelines(header)
                 fid.writelines(data)
             fid.close()
@@ -174,20 +176,20 @@ class ImageSpider(object):
                 fid = open(filename, "wb")
                 if len(data.shape) == 3:
                     # Write first header
-                    header = self.makeSpiderHeader(data, mode=mode)
+                    header = self.makeSpiderHeader(data, mode=mode, sr=sr)
                     fid.writelines(header)
 
                     # Write slices
                     for slice in data:
                         if mode == ".stk":
-                            header = self.makeSpiderHeader(slice[None, ...], mode=mode)
+                            header = self.makeSpiderHeader(slice[None, ...], mode=mode, sr=sr)
                             fid.writelines(header)
                         fid.writelines(slice)
                 else:
                     mode = ".vol"
                     # Write image
                     data = data[None, ...] if len(data.shape) == 2 else data
-                    header = self.makeSpiderHeader(data, mode=mode)
+                    header = self.makeSpiderHeader(data, mode=mode, sr=sr)
                     fid.writelines(header)
                     fid.writelines(data)
                 fid.close()
@@ -196,7 +198,7 @@ class ImageSpider(object):
                                 "in new data is different. Please, set overwrite to True "
                                 "if you are sure you want to do this.")
 
-    def makeSpiderHeader(self, im, mode):
+    def makeSpiderHeader(self, im, mode, sr=1.0):
         n_slice, nsam, nrow = im.shape
         lenbyt = nsam * 4  # There are labrec records in the header
         labrec = int(1024 / lenbyt)
@@ -218,6 +220,7 @@ class ImageSpider(object):
         hdr[5] = 1.0 if mode == ".stk" else 3.0
         hdr[12] = float(nsam)  # number of pixels per line
         hdr[13] = float(labrec)  # number of records in file header
+        hdr[21] = float(sr)  # sampling rate
         hdr[22] = float(labbyt)  # total number of bytes in header
         hdr[23] = float(lenbyt)  # record length in bytes
         hdr[24] = 2.0 if mode == ".stk" else 0.0
@@ -229,6 +232,12 @@ class ImageSpider(object):
         hdr.append(0.0)
         # pack binary data into a string
         return [struct.pack("f", v) for v in hdr]
+
+    def getSamplingRate(self):
+        if self.header_info is not None:
+            return self.header_info["sr"]
+        else:
+            return None
 
     def close(self):
         '''

@@ -67,5 +67,14 @@ class ImageEM(object):
         '''
         self.header, self.data = emfile.read(filename, mmap=True, header_only=False)
 
-    def write(self, data, filename, overwrite=False):
-        emfile.write(filename, data.astype(np.float32), overwrite=overwrite)
+    def getSamplingRate(self):
+        if self.header is not None:
+            return self.header["SPx"]
+        else:
+            return None
+
+    def write(self, data, filename, overwrite=False, sr=1.0):
+        sr = 1.0 if sr == 0.0 else sr
+        header_params = {"SPx": sr, "SPy": sr, "SPz": sr}
+        emfile.write(filename, data.astype(np.float32), header_params=header_params,
+                     overwrite=overwrite)

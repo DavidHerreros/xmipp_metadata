@@ -59,11 +59,11 @@ img = ih[0]
 
 
 # Write image (STK)
-ih.write(img, filename=os.path.join("test_outputs", "test.stk"))
+ih.write(img, filename=os.path.join("test_outputs", "test.stk"), sr=4.0)
 
 
 # Write image (MRC)
-ih.write(img, filename=os.path.join("test_outputs", "test.mrc"))
+ih.write(img, filename=os.path.join("test_outputs", "test.mrc"), sr=4.0)
 
 
 # Raise error due to wrong overwrite
@@ -75,11 +75,11 @@ except Exception as e:
 
 # Write image stack (STK)
 img = ih[0:10]
-ih.write(img, filename=os.path.join("test_outputs", "test_stack.stk"))
+ih.write(img, filename=os.path.join("test_outputs", "test_stack.stk"), sr=4.0)
 
 
 # Write volume (VOL)
-ih.write(img, filename=os.path.join("test_outputs", "test.vol"))
+ih.write(img, filename=os.path.join("test_outputs", "test.vol"), sr=4.0)
 
 
 # Convert (STK to MRCS)
@@ -143,3 +143,13 @@ try:
                     finalDimension=[128, 128])
 except Exception as e:
     print("Error raised correctly!")
+
+
+# Create circular mask (image)
+ih.createCircularMask(os.path.join("test_outputs", "mask_image.mrc"), boxSize=128, is3D=False,
+                      sr=4.0)
+
+
+# Create circular mask (volume)
+ih.createCircularMask(os.path.join("test_outputs", "mask_vol.mrc"), boxSize=128, is3D=True,
+                      sr=4.0)

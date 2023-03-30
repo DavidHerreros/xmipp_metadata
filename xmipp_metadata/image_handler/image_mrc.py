@@ -76,6 +76,14 @@ class ImageMRC(object):
             self.mrc_handle.update_header_from_data()
             self.header = self.mrc_handle.header
 
-    def write(self, data, filename, overwrite=False):
+    def getSamplingRate(self):
+        if self.mrc_handle is not None:
+            return self.mrc_handle.voxel_size[0]
+        else:
+            return None
+
+    def write(self, data, filename, overwrite=False, sr=1.0):
+        sr = 1.0 if sr == 0.0 else sr
         with mrcfile.new(filename, overwrite=overwrite) as mrc:
             mrc.set_data(data.astype(np.float32))
+            mrc.voxel_size = sr

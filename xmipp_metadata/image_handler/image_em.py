@@ -25,6 +25,8 @@
 # **************************************************************************
 
 
+import numpy as np
+
 import emfile
 
 
@@ -46,7 +48,7 @@ class ImageEM(object):
         print("File closed succesfully!")
 
     def __len__(self):
-        return self.data.shape[0]
+        return self.header["zdim"]
 
     def __iter__(self):
         '''
@@ -66,4 +68,4 @@ class ImageEM(object):
         self.header, self.data = emfile.read(filename, mmap=True, header_only=False)
 
     def write(self, data, filename, overwrite=False):
-        emfile.write(filename, data, overwrite=overwrite)
+        emfile.write(filename, data.astype(np.float32), overwrite=overwrite)

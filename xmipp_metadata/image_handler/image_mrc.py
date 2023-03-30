@@ -78,7 +78,7 @@ class ImageMRC(object):
 
     def getSamplingRate(self):
         if self.mrc_handle is not None:
-            return self.mrc_handle.voxel_size[0]
+            return float(self.mrc_handle.voxel_size.x)
         else:
             return None
 

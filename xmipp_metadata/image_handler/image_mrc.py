@@ -68,7 +68,10 @@ class ImageMRC(object):
         try:
             self.mrc_handle = mrcfile.mmap(filename, mode='r+')
             self.header = self.mrc_handle.header
-        except:
+        except ValueError as e:
+            print("MRC file header is not valid and raised the following error: ")
+            print(e)
+            print("We will try to read on permissive mode, and fix the header to recover your data")
             self.mrc_handle = mrcfile.mmap(filename, mode='r+', permissive=True)
             self.mrc_handle.update_header_from_data()
             self.header = self.mrc_handle.header

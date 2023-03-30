@@ -31,8 +31,7 @@ import numpy as np
 
 from skimage.transform import rescale, resize
 
-import mrcfile
-from mrcfile.mrcmemmap import MrcMemmap
+from .image_mrc import ImageMRC
 
 from .image_spider import ImageSpider
 
@@ -52,6 +51,7 @@ class ImageHandler(object):
 
     def __init__(self, binary_file=None):
         if binary_file:
+            binary_file = str(binary_file)
             if ":mrcs" in binary_file:
                 binary_file = binary_file.replace(":mrcs", "")
             elif ":mrc" in binary_file:
@@ -60,7 +60,7 @@ class ImageHandler(object):
             self.binary_file = Path(binary_file)
 
             if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
-                self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
+                self.BINARIES = ImageMRC(self.binary_file)
             elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
                     or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
                 self.BINARIES = ImageSpider(self.binary_file)
@@ -68,8 +68,8 @@ class ImageHandler(object):
                 self.BINARIES = ImageEM(self.binary_file)
 
     def __getitem__(self, item):
-        if isinstance(self.BINARIES, MrcMemmap):
-            return self.BINARIES.data[item].copy()
+        if isinstance(self.BINARIES, ImageMRC):
+            return self.BINARIES[item].copy()
         elif isinstance(self.BINARIES, ImageSpider):
             return self.BINARIES[item].copy()
         elif isinstance(self.BINARIES, ImageEM):
@@ -80,10 +80,10 @@ class ImageHandler(object):
     def __len__(self):
         if isinstance(self.BINARIES, ImageSpider):
             return len(self.BINARIES)
-        elif isinstance(self.BINARIES, MrcMemmap):
-            return self.BINARIES.header["nz"]
+        elif isinstance(self.BINARIES, ImageMRC):
+            return len(self.BINARIES)
         elif isinstance(self.BINARIES, ImageEM):
-            return self.BINARIES.header["zdim"]
+            return len(self.BINARIES)
         else:
             return 0
 
@@ -100,6 +100,7 @@ class ImageHandler(object):
         if self.BINARIES:
             self.close()
 
+        binary_file = str(binary_file)
         if ":mrcs" in binary_file:
             binary_file = binary_file.replace(":mrcs", "")
         elif ":mrc" in binary_file:
@@ -108,7 +109,7 @@ class ImageHandler(object):
         self.binary_file = Path(binary_file)
 
         if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
-            self.BINARIES = mrcfile.mmap(self.binary_file, mode='r+')
+            self.BINARIES = ImageMRC(self.binary_file)
         elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
                 or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
             self.BINARIES = ImageSpider(self.binary_file)
@@ -126,8 +127,7 @@ class ImageHandler(object):
         filename = self.binary_file if filename is None else Path(filename)
 
         if filename.suffix == ".mrc" or filename.suffix == ".mrcs":
-            with mrcfile.new(filename, overwrite=True) as mrc:
-                mrc.set_data(data.astype(np.float32))
+            ImageMRC().write(data, filename, overwrite=overwrite)
         elif filename.suffix == ".stk" or filename.suffix == ".vol" \
                 or filename.suffix == ".xmp" or filename.suffix == ".spi":
             ImageSpider().write(data, filename, overwrite=overwrite)
@@ -147,7 +147,7 @@ class ImageHandler(object):
             return np.asarray([self.BINARIES.header_info["n_slices"],
                                self.BINARIES.header_info["n_rows"],
                                self.BINARIES.header_info["n_columns"]])
-        elif isinstance(self.BINARIES, MrcMemmap):
+        elif isinstance(self.BINARIES, ImageMRC):
             return np.asarray([self.BINARIES.header["nz"],
                                self.BINARIES.header["ny"],
                                self.BINARIES.header["nx"]])

@@ -29,7 +29,7 @@ from pathlib import Path
 
 import numpy as np
 
-from skimage.transform import rescale, resize
+from skimage.transform import rescale, resize, warp
 
 from .image_mrc import ImageMRC
 
@@ -200,6 +200,70 @@ class ImageHandler(object):
         new_sr = new_sr if new_sr > 0.0 else 1.0
 
         self.write(data, outputFn, sr=new_sr, overwrite=overwrite)
+
+    def affineTransform(self, inputFn, outputFn, transformation, isStack=False, overwrite=False):
+        self.read(inputFn)
+        data = np.squeeze(self.getData())
+
+        # Transformation dim
+        tr_dim = data.ndim if isStack else data.ndim + 1
+
+        # Make transformation homogeneous (if not already)
+        if transformation.shape[0] != tr_dim:
+            transformation, aux = np.eye(tr_dim), transformation
+            transformation[:-1, :-1] = aux
+
+        # Get inverse transform
+        inv_transformation = np.eye(tr_dim)
+        inv_transformation[:-1, :-1] = np.linalg.inv(transformation[:-1, :-1])
+        inv_transformation[:-1, -1] = -inv_transformation[:-1, :-1] @ transformation[:-1, -1]
+
+        # Compute offset to rotate around image centre
+        offset = 0.5 * np.asarray(data.shape[1:]) if isStack else 0.5 * np.asarray(data.shape)
+
+        # Get grid coords
+        if isStack:
+            shape = [data.shape[1], data.shape[2]]
+            Y, X = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
+            coords = np.array([X.ravel(), Y.ravel()])
+        elif data.ndim == 2:
+            shape = data.shape
+            Y, X = np.meshgrid(np.arange(shape[0]), np.arange(shape[1]))
+            coords = np.array([X.ravel(), Y.ravel()])
+        else:
+            shape = data.shape
+            Z, Y, X = np.meshgrid(np.arange(shape[0]),
+                                  np.arange(shape[1]),
+                                  np.arange(shape[2]))
+            coords = np.array([X.ravel(), Y.ravel(), Z.ravel()])
+        coords = coords - offset[:, None]
+
+        # Homogeneous coords
+        coords = np.vstack([coords, np.zeros([1, coords.shape[1]])])
+
+        # Get rotated coords
+        rot_coords = inv_transformation @ coords
+
+        # Coords in ZYX
+        rot_coords = rot_coords[:-1, :]
+
+        # Undo offset
+        rot_coords = rot_coords + offset[:, None]
+
+        # Warp coords
+        coords = rot_coords.reshape([-1, ] + list(shape))
+
+        if isStack:
+            aux = []
+            for slice in data:
+                aux.append(warp(slice, coords))
+            data = np.asarray(aux)
+        else:
+            data = warp(data, coords)
+
+        sr = self.getSamplingRate() if self.getSamplingRate() > 0.0 else 1.0
+
+        self.write(data, outputFn, sr=sr, overwrite=overwrite)
 
     def createCircularMask(self, outputFile, boxSize=None, radius=None, center=None, is3D=True,
                            sr=1.0):

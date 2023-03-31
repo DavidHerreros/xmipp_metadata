@@ -28,6 +28,8 @@
 
 import os
 import shutil
+from scipy.spatial.transform import Rotation as R
+import numpy as np
 
 from xmipp_metadata.image_handler import ImageHandler
 
@@ -171,3 +173,21 @@ ih.createCircularMask(os.path.join("test_outputs", "mask_image.mrc"), boxSize=12
 # Create circular mask (volume)
 ih.createCircularMask(os.path.join("test_outputs", "mask_vol.mrc"), boxSize=128, is3D=True,
                       sr=4.0)
+
+
+# Warp stack (STK) (Rot 90º)
+angle = 0.5 * np.pi
+transform = np.eye(3)
+transform[:-1, :-1] = np.asarray([[np.cos(angle), -np.sin(angle)],
+                                  [np.sin(angle), np.cos(angle)]])
+ImageHandler().affineTransform("scaled_particles.stk",
+                               os.path.join("test_outputs", "test_stack_tr.stk",),
+                               transformation=transform, isStack=True)
+
+
+# Warp stack (VOL) (Rot 90º)
+transform = np.eye(4)
+transform[:-1, :-1] = R.from_euler("zyz", [0.0, 0.0, angle]).as_matrix()
+ImageHandler().affineTransform("AK.vol",
+                               os.path.join("test_outputs", "test_tr.vol"),
+                               transformation=transform, isStack=False)

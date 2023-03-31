@@ -164,7 +164,7 @@ class ImageHandler(object):
             return None
 
     def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None,
-                     isStack=False):
+                     isStack=False, overwrite=False):
         self.read(inputFn)
         data = np.squeeze(self.getData())
 
@@ -197,8 +197,9 @@ class ImageHandler(object):
 
         scaleFactor = finalDimension[0] / data.shape[0] if scaleFactor is None else scaleFactor
         new_sr = self.getSamplingRate() / scaleFactor
+        new_sr = new_sr if new_sr > 0.0 else 1.0
 
-        self.write(data, outputFn, sr=new_sr)
+        self.write(data, outputFn, sr=new_sr, overwrite=overwrite)
 
     def createCircularMask(self, outputFile, boxSize=None, radius=None, center=None, is3D=True,
                            sr=1.0):

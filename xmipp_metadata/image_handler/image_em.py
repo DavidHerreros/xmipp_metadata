@@ -26,6 +26,7 @@
 
 
 import numpy as np
+import os
 
 import emfile
 
@@ -76,5 +77,9 @@ class ImageEM(object):
     def write(self, data, filename, overwrite=False, sr=1.0):
         sr = 1.0 if sr == 0.0 else sr
         header_params = {"SPx": sr, "SPy": sr, "SPz": sr}
+
+        if overwrite and os.path.isfile(filename):
+            os.remove(filename)
+
         emfile.write(filename, data.astype(np.float32), header_params=header_params,
                      overwrite=overwrite)

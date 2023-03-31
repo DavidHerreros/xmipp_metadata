@@ -28,6 +28,7 @@
 import struct
 import numpy as np
 from pathlib import Path
+import os
 
 
 class ImageSpider(object):
@@ -146,6 +147,9 @@ class ImageSpider(object):
     def write(self, data, filename=None, overwrite=False, sr=1.0):
         data = data.astype(np.float32)
         sr = 1.0 if sr == 0.0 else sr
+
+        if overwrite and os.path.isfile(filename):
+            os.remove(filename)
 
         if filename:
             mode = Path(filename).suffix

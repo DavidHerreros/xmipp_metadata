@@ -26,6 +26,7 @@
 
 
 import numpy as np
+import os
 
 import mrcfile
 
@@ -84,6 +85,10 @@ class ImageMRC(object):
 
     def write(self, data, filename, overwrite=False, sr=1.0):
         sr = 1.0 if sr == 0.0 else sr
+
+        if overwrite and os.path.isfile(filename):
+            os.remove(filename)
+
         with mrcfile.new(filename, overwrite=overwrite) as mrc:
             mrc.set_data(data.astype(np.float32))
             mrc.voxel_size = sr

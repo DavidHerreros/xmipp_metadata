@@ -135,6 +135,24 @@ ih.scaleSplines("AK.vol",
                 finalDimension=128)
 
 
+# Scale volume (MRC) with single int
+ih.scaleSplines("AK.vol",
+                os.path.join("test_outputs", "test_scaled_int.mrc"),
+                finalDimension=128)
+
+
+# Scale volume (MRC) with single int (overwrite)
+ImageHandler().scaleSplines(os.path.join("test_outputs", "test_scaled_int.mrc"),
+                            os.path.join("test_outputs", "test_scaled_int.mrc"),
+                            finalDimension=256, overwrite=True)
+
+
+# Scale volume (VOL) with single int (overwrite)
+ImageHandler().scaleSplines(os.path.join("test_outputs", "test_scaled_int.vol"),
+                            os.path.join("test_outputs", "test_scaled_int.vol"),
+                            finalDimension=256, overwrite=True)
+
+
 # Check resize error due to wrong dimensions
 # Raise error due to wrong overwrite
 try:

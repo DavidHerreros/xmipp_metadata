@@ -191,3 +191,13 @@ transform[:-1, :-1] = R.from_euler("zyz", [0.0, 0.0, angle]).as_matrix()
 ImageHandler().affineTransform("AK.vol",
                                os.path.join("test_outputs", "test_tr.vol"),
                                transformation=transform, isStack=False)
+
+
+# Set sampling rate (VOL)
+ImageHandler().setSamplingRate(os.path.join("test_outputs", "test_tr.vol"), sr=8.0)
+
+
+# Add noise (VOL)
+ImageHandler().addNoise(os.path.join("test_outputs", "test_tr.vol"),
+                        os.path.join("test_outputs", "test_tr.vol"),
+                        avg=0.0, std=1.0, overwrite=True)

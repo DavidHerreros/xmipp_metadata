@@ -163,6 +163,10 @@ class ImageHandler(object):
         else:
             return None
 
+    def setSamplingRate(self, input_file, sr):
+        self.read(input_file)
+        self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
+
     def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None,
                      isStack=False, overwrite=False):
         self.read(inputFn)
@@ -285,6 +289,15 @@ class ImageHandler(object):
         mask = dist_from_center <= radius
 
         self.write(mask, outputFile, overwrite=True, sr=sr)
+
+
+    def addNoise(self, input_file, output_file, std=1.0, avg=0.0, overwrite=False):
+        self.read(input_file)
+        data = np.squeeze(self.getData())
+        noise = np.random.normal(loc=avg, scale=std, size=data.shape)
+        data_noise = data + noise
+        self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
+
 
     def close(self):
         '''

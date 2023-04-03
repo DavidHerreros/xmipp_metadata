@@ -30,6 +30,7 @@ import os
 import shutil
 from scipy.spatial.transform import Rotation as R
 import numpy as np
+import time
 
 from xmipp_metadata.image_handler import ImageHandler
 
@@ -198,6 +199,15 @@ ImageHandler().setSamplingRate(os.path.join("test_outputs", "test_tr.vol"), sr=8
 
 
 # Add noise (VOL)
-ImageHandler().addNoise(os.path.join("test_outputs", "test_tr.vol"),
+ImageHandler().addNoise(os.path.join("test_outputs", "test_scaled_int.vol"),
                         os.path.join("test_outputs", "test_tr.vol"),
-                        avg=0.0, std=1.0, overwrite=True)
+                        avg=0.0, std=0.2, overwrite=True)
+
+
+# Generate mask (VOL)
+ih = ImageHandler(os.path.join("test_outputs", "test_tr.vol"))
+start_time = time.time()
+mask = ih.generateMask(iterations=150)
+end_time = time.time()
+print(end_time - start_time)
+ih.write(mask, os.path.join("test_outputs", "test_generated_mask.vol"), sr=2.0)

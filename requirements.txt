@@ -5,3 +5,4 @@ mrcfile
 emfile
 emtable
 scikit-image
+morphsnakes

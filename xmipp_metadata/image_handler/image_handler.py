@@ -31,6 +31,10 @@ import numpy as np
 
 from skimage.transform import rescale, resize, warp
 
+import morphsnakes as ms
+
+from scipy.ndimage.filters import gaussian_filter
+
 from .image_mrc import ImageMRC
 
 from .image_spider import ImageSpider
@@ -290,13 +294,41 @@ class ImageHandler(object):
 
         self.write(mask, outputFile, overwrite=True, sr=sr)
 
-
     def addNoise(self, input_file, output_file, std=1.0, avg=0.0, overwrite=False):
         self.read(input_file)
         data = np.squeeze(self.getData())
         noise = np.random.normal(loc=avg, scale=std, size=data.shape)
         data_noise = data + noise
         self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
+
+    def generateMask(self, iterations=150, smoothing=1, lambda1=1, lambda2=2, std=1, boxsize=128):
+        # Read the data
+        data = np.squeeze(self.getData())
+
+        # Filter to remove noise (optional step)
+        if std is not None:
+            data = gaussian_filter(data, std)
+
+        # Downscale to reduce execution times (optional but highly recommended)
+        if boxsize is not None:
+            ori_boxsize = data.shape[0]
+            finalDimension = boxsize * np.ones(len(data.shape))
+            data = resize(data, finalDimension)
+
+        # Initialization for snakes
+        init_ls = ms.circle_level_set(data.shape)
+
+        # Generate snake mask
+        acwe_ls1 = ms.morphological_chan_vese(data, iterations=iterations,
+                                              init_level_set=init_ls, smoothing=smoothing,
+                                              lambda1=lambda1, lambda2=lambda2)
+
+        # Upscale mask (if downscaling was applied)
+        if boxsize is not None:
+            finalDimension = ori_boxsize * np.ones(len(data.shape))
+            acwe_ls1 = resize(acwe_ls1.astype(bool), finalDimension).astype(np.float32)
+
+        return acwe_ls1
 
 
     def close(self):

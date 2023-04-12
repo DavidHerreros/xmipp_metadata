@@ -139,10 +139,10 @@ class ImageHandler(object):
         elif filename.suffix == ".em" or filename.suffix == ".ems":
             ImageEM().write(data, filename, overwrite=overwrite, sr=sr)
 
-    def convert(self, orig_file, dest_file):
+    def convert(self, orig_file, dest_file, overwrite=False):
         self.read(orig_file)
         data = self.getData()
-        self.write(data, dest_file, sr=self.getSamplingRate())
+        self.write(data, dest_file, sr=self.getSamplingRate(), overwrite=overwrite)
 
     def getData(self):
         return self[:]

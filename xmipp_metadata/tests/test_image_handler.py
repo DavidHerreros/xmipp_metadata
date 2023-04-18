@@ -207,7 +207,7 @@ ImageHandler().addNoise(os.path.join("test_outputs", "test_scaled_int.vol"),
 # Generate mask (VOL)
 ih = ImageHandler(os.path.join("test_outputs", "test_tr.vol"))
 start_time = time.time()
-mask = ih.generateMask(iterations=50, boxsize=64, smoothStairEdges=True)
+mask = ih.generateMask(iterations=50, boxsize=64, smoothStairEdges=False)
 end_time = time.time()
 print(end_time - start_time)
 ih.write(mask, os.path.join("test_outputs", "test_generated_mask.vol"), sr=2.0)

@@ -30,6 +30,8 @@ from pathlib import Path
 import numpy as np
 
 from skimage.transform import rescale, resize, warp
+from skimage import filters
+from skimage.measure import label
 
 import morphsnakes as ms
 
@@ -301,10 +303,35 @@ class ImageHandler(object):
         data_noise = data + noise
         self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
 
-    def generateMask(self, iterations=150, smoothing=1, lambda1=1, lambda2=2, std=1, boxsize=128,
-                     smoothStairEdges=True):
+    def generateMask(self, iterations=150, smoothing=0, lambda1=1, lambda2=2, std=1, boxsize=128,
+                     smoothStairEdges=False, keep_largest=True):
+        '''Generate automatically a binary protein mask based on a combination of snakes and
+        Otsu method.
+            :param int iterations: Number of iterations for computing the snake mask.
+            :param int smoothing: Number of times the smoothing operator is applied per iteration.
+                                  Reasonable values are around 0-4. Larger values lead to smoother
+                                  segmentations.
+            :param int lambda1: Weight parameter for the outer region. If `lambda1` is larger than
+                                `lambda2`, the outer region will contain a larger range of values than
+                                the inner region.
+            :param int lambda2: Weight parameter for the inner region. If `lambda2` is larger than
+                                `lambda1`, the inner region will contain a larger range of values than
+                                the outer region.
+            :param int std: Standard deviation to prefilter the map based on a Gaussian filter. Useful when
+                            dealing with noisy maps
+            :param int boxsize: Compute the snake mask for a map downsampled/upscaled to this size. We recommend
+                                to downsample the map to a boxsize between 64px - 128px to improve performance.
+                                The output size of the mask generated will keep the original map dimensions, even
+                                if this parameter is used
+            :param bool smoothStairEdges: Smooth the snake mask borders to avoid stair caise like borders.
+                                          We recommend setting it to True if boxsized downsamples the original map.
+            :param bool keep_largest: Keep the largest component only detected by the snakes mask. This will help the
+                                      posterior Otsu thresholding step to find the appropriate threshold to segment the
+                                      protein.
+        '''
         # Read the data
         data = np.squeeze(self.getData())
+        data_ori = data.copy()
 
         # Filter to remove noise (optional step)
         if std is not None:
@@ -324,6 +351,12 @@ class ImageHandler(object):
                                               init_level_set=init_ls, smoothing=smoothing,
                                               lambda1=lambda1, lambda2=lambda2)
 
+        # Keep the largest component only
+        if keep_largest:
+            labels = label(acwe_ls1)
+            assert (labels.max() != 0)  # assume at least 1 CC
+            acwe_ls1 = labels == np.argmax(np.bincount(labels.flat)[1:]) + 1
+
         # Upscale mask (if downscaling was applied)
         if boxsize is not None:
             finalDimension = ori_boxsize * np.ones(len(data.shape))
@@ -332,6 +365,9 @@ class ImageHandler(object):
 
         if smoothStairEdges:
             acwe_ls1 = (median_filter(acwe_ls1, size=5) >= 0.001).astype(np.float32)
+
+        data_ori = data_ori * acwe_ls1
+        acwe_ls1 = (data_ori >= filters.threshold_otsu(data_ori)).astype(np.float32)
 
         return acwe_ls1
 

@@ -33,7 +33,7 @@ from skimage.transform import rescale, resize, warp
 
 import morphsnakes as ms
 
-from scipy.ndimage.filters import gaussian_filter
+from scipy.ndimage.filters import gaussian_filter, median_filter
 
 from .image_mrc import ImageMRC
 
@@ -301,7 +301,8 @@ class ImageHandler(object):
         data_noise = data + noise
         self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
 
-    def generateMask(self, iterations=150, smoothing=1, lambda1=1, lambda2=2, std=1, boxsize=128):
+    def generateMask(self, iterations=150, smoothing=1, lambda1=1, lambda2=2, std=1, boxsize=128,
+                     smoothStairEdges=True):
         # Read the data
         data = np.squeeze(self.getData())
 
@@ -327,6 +328,10 @@ class ImageHandler(object):
         if boxsize is not None:
             finalDimension = ori_boxsize * np.ones(len(data.shape))
             acwe_ls1 = resize(acwe_ls1.astype(bool), finalDimension).astype(np.float32)
+
+
+        if smoothStairEdges:
+            acwe_ls1 = (median_filter(acwe_ls1, size=5) >= 0.001).astype(np.float32)
 
         return acwe_ls1
 

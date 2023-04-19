@@ -1,7 +1,10 @@
-numpy
+numpy<=1.23.0
+pillow==8.4.0; python_version == '3.6'
+pillow==9.2.0; python_version >= '3.7'
 pandas
 starfile
 mrcfile
 emfile
 emtable
 scikit-image
+morphsnakes

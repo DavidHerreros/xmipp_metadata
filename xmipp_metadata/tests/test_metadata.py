@@ -58,5 +58,9 @@ metadata = XmippMetaData("input_particles.xmd")
 img = metadata.getMetaDataImage(0)
 
 
-# Write metadata
-metadata.write(filename=os.path.join("test_outputs", "test.xmd"))
+# Write metadata (do not update paths)
+metadata.write(filename=os.path.join("test_outputs", "test_same_paths.xmd"))
+
+
+# Write metadata (update paths)
+metadata.write(filename=os.path.join("test_outputs", "test_new_paths.xmd"), updateImagePaths=True)

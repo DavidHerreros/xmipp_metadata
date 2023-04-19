@@ -26,3 +26,5 @@
 
 from .image_handler import ImageHandler
 from .image_spider import ImageSpider
+from .image_em import ImageEM
+from .image_mrc import ImageMRC

@@ -28,19 +28,19 @@
 import numpy as np
 import os
 
-import emfile
+import mrcfile
 
 
-class ImageEM(object):
+class ImageMRC(object):
     '''
-    Class to read an EM file
+    Class to read an MRC file
     '''
 
     def __init__(self, filename=None):
         if filename:
             self.read(filename)
         else:
-            self.header, self.data = None, None
+            self.mrc_handle, self.header = None, None
 
     def __del__(self):
         '''
@@ -49,7 +49,7 @@ class ImageEM(object):
         print("File closed succesfully!")
 
     def __len__(self):
-        return self.header["zdim"]
+        return self.mrc_handle.header["nz"]
 
     def __iter__(self):
         '''
@@ -59,27 +59,36 @@ class ImageEM(object):
             yield image
 
     def __getitem__(self, item):
-        return self.data[item]
+        return self.mrc_handle.data[item]
 
     def read(self, filename):
         '''
         Reads a given image
             :param filename (str) --> Image to be read
         '''
-        self.header, self.data = emfile.read(filename, mmap=True, header_only=False)
+        try:
+            self.mrc_handle = mrcfile.mmap(filename, mode='r+')
+            self.header = self.mrc_handle.header
+        except ValueError as e:
+            print("MRC file header is not valid and raised the following error: ")
+            print(e)
+            print("We will try to read on permissive mode, and fix the header to recover your data")
+            self.mrc_handle = mrcfile.mmap(filename, mode='r+', permissive=True)
+            self.mrc_handle.update_header_from_data()
+            self.header = self.mrc_handle.header
 
     def getSamplingRate(self):
-        if self.header is not None:
-            return self.header["SPx"]
+        if self.mrc_handle is not None:
+            return float(self.mrc_handle.voxel_size.x)
         else:
             return None
 
     def write(self, data, filename, overwrite=False, sr=1.0):
         sr = 1.0 if sr == 0.0 else sr
-        header_params = {"SPx": sr, "SPy": sr, "SPz": sr}
 
         if overwrite and os.path.isfile(filename):
             os.remove(filename)
 
-        emfile.write(filename, data.astype(np.float32), header_params=header_params,
-                     overwrite=overwrite)
+        with mrcfile.new(filename, overwrite=overwrite) as mrc:
+            mrc.set_data(data.astype(np.float32))
+            mrc.voxel_size = sr

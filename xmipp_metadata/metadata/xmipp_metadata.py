@@ -118,7 +118,7 @@ class XmippMetaData(object):
         for label in remain:
             self.table[label] = 0.0
 
-    def write(self, filename, overwrite=False):
+    def write(self, filename, overwrite=False, updateImagePaths=False):
         '''
         Write current metadata to file
         '''
@@ -147,10 +147,11 @@ class XmippMetaData(object):
 
             return image
 
-        for idx in range(len(self)):
-            image = self.getMetadataItems(idx, "image")[0]
-            image = composeImageRelPath(image, filename_path)
-            self.setMetaDataItems(image, idx, "image")
+        if updateImagePaths:
+            for idx in range(len(self)):
+                image = self.getMetadataItems(idx, "image")[0]
+                image = composeImageRelPath(image, filename_path)
+                self.setMetaDataItems(image, idx, "image")
         starfile.write(self.table, filename, overwrite=overwrite)
 
     def __del__(self):

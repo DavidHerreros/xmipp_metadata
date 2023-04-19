@@ -28,6 +28,9 @@
 
 import os
 import shutil
+from scipy.spatial.transform import Rotation as R
+import numpy as np
+import time
 
 from xmipp_metadata.image_handler import ImageHandler
 
@@ -59,11 +62,11 @@ img = ih[0]
 
 
 # Write image (STK)
-ih.write(img, filename=os.path.join("test_outputs", "test.stk"))
+ih.write(img, filename=os.path.join("test_outputs", "test.stk"), sr=4.0)
 
 
 # Write image (MRC)
-ih.write(img, filename=os.path.join("test_outputs", "test.mrc"))
+ih.write(img, filename=os.path.join("test_outputs", "test.mrc"), sr=4.0)
 
 
 # Raise error due to wrong overwrite
@@ -75,11 +78,11 @@ except Exception as e:
 
 # Write image stack (STK)
 img = ih[0:10]
-ih.write(img, filename=os.path.join("test_outputs", "test_stack.stk"))
+ih.write(img, filename=os.path.join("test_outputs", "test_stack.stk"), sr=4.0)
 
 
 # Write volume (VOL)
-ih.write(img, filename=os.path.join("test_outputs", "test.vol"))
+ih.write(img, filename=os.path.join("test_outputs", "test.vol"), sr=4.0)
 
 
 # Convert (STK to MRCS)
@@ -121,3 +124,90 @@ ih.scaleSplines(os.path.join("test_outputs", "test.stk"),
 ih.scaleSplines("AK.vol",
                 os.path.join("test_outputs", "test_scaled.vol"),
                 finalDimension=[128, 128, 128])
+
+
+# Scale stack (STK) with single int
+ih.scaleSplines("scaled_particles.stk",
+                os.path.join("test_outputs", "test_stack_scaled_int.stk"),
+                finalDimension=128, isStack=True)
+
+
+# Scale volume (VOL) with single int
+ih.scaleSplines("AK.vol",
+                os.path.join("test_outputs", "test_scaled_int.vol"),
+                finalDimension=128)
+
+
+# Scale volume (MRC) with single int
+ih.scaleSplines("AK.vol",
+                os.path.join("test_outputs", "test_scaled_int.mrc"),
+                finalDimension=128)
+
+
+# Scale volume (MRC) with single int (overwrite)
+ImageHandler().scaleSplines(os.path.join("test_outputs", "test_scaled_int.mrc"),
+                            os.path.join("test_outputs", "test_scaled_int.mrc"),
+                            finalDimension=256, overwrite=True)
+
+
+# Scale volume (VOL) with single int (overwrite)
+ImageHandler().scaleSplines(os.path.join("test_outputs", "test_scaled_int.vol"),
+                            os.path.join("test_outputs", "test_scaled_int.vol"),
+                            finalDimension=256, overwrite=True)
+
+
+# Check resize error due to wrong dimensions
+# Raise error due to wrong overwrite
+try:
+    ih.scaleSplines("AK.vol",
+                    os.path.join("test_outputs", "test_scaled_int.vol"),
+                    finalDimension=[128, 128])
+except Exception as e:
+    print("Error raised correctly!")
+
+
+# Create circular mask (image)
+ih.createCircularMask(os.path.join("test_outputs", "mask_image.mrc"), boxSize=128, is3D=False,
+                      sr=4.0)
+
+
+# Create circular mask (volume)
+ih.createCircularMask(os.path.join("test_outputs", "mask_vol.mrc"), boxSize=128, is3D=True,
+                      sr=4.0)
+
+
+# Warp stack (STK) (Rot 90º)
+angle = 0.5 * np.pi
+transform = np.eye(3)
+transform[:-1, :-1] = np.asarray([[np.cos(angle), -np.sin(angle)],
+                                  [np.sin(angle), np.cos(angle)]])
+ImageHandler().affineTransform("scaled_particles.stk",
+                               os.path.join("test_outputs", "test_stack_tr.stk",),
+                               transformation=transform, isStack=True)
+
+
+# Warp stack (VOL) (Rot 90º)
+transform = np.eye(4)
+transform[:-1, :-1] = R.from_euler("zyz", [0.0, 0.0, angle]).as_matrix()
+ImageHandler().affineTransform("AK.vol",
+                               os.path.join("test_outputs", "test_tr.vol"),
+                               transformation=transform, isStack=False)
+
+
+# Set sampling rate (VOL)
+ImageHandler().setSamplingRate(os.path.join("test_outputs", "test_tr.vol"), sr=8.0)
+
+
+# Add noise (VOL)
+ImageHandler().addNoise(os.path.join("test_outputs", "test_scaled_int.vol"),
+                        os.path.join("test_outputs", "test_tr.vol"),
+                        avg=0.0, std=0.2, overwrite=True)
+
+
+# Generate mask (VOL)
+ih = ImageHandler(os.path.join("test_outputs", "test_tr.vol"))
+start_time = time.time()
+mask = ih.generateMask(iterations=50, boxsize=64, smoothStairEdges=False)
+end_time = time.time()
+print(end_time - start_time)
+ih.write(mask, os.path.join("test_outputs", "test_generated_mask.vol"), sr=2.0)

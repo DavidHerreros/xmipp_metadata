@@ -35,13 +35,10 @@ jobs:
         # $CONDA is an environment variable pointing to the root of the miniconda directory
         echo $CONDA/bin >> $GITHUB_PATH
     - name: Publish to Conda
-      with:
-        miniconda-version: "latest"
-        channels: conda-forge, dherreros
-        auto-update-conda: true
-        auto-activate-base: true
       run: |
         conda activate
+        conda config --add channels conda-forge
+        conda config --add channels dherreros
         conda install -y anaconda-client conda-build conda-verify
         anaconda login --username ${{ secrets.ANACONDA_USERNAME }} --password ${{ secrets.ANACONDA_PASSWORD }}
         conda build conda/conda_build_config.yaml

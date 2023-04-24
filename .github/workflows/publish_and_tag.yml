@@ -36,8 +36,7 @@ jobs:
         echo $CONDA/bin >> $GITHUB_PATH
     - name: Publish to Conda
       run: |
-        conda init bash
-        source ~/.bashrc
+        eval "$(conda shell.bash hook)"
         conda activate
         conda config --add channels conda-forge
         conda config --add channels dherreros

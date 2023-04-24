@@ -43,7 +43,7 @@ jobs:
         conda install -y anaconda-client conda-build conda-verify
         anaconda login --username ${{ secrets.ANACONDA_USERNAME }} --password ${{ secrets.ANACONDA_PASSWORD }}
         conda build conda/
-        anaconda upload miniconda/conda-bld/linux-64/xmipp_metadata*
+        anaconda upload /usr/share/miniconda/conda-bld/linux-64/xmipp_metadata-*-py*
     - name: Build and publish Pypi
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}

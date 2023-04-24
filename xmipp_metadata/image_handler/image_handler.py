@@ -32,6 +32,7 @@ import numpy as np
 from skimage.transform import rescale, resize, warp
 from skimage import filters
 from skimage.measure import label
+from skimage.morphology import opening, ball
 
 import morphsnakes as ms
 
@@ -304,7 +305,7 @@ class ImageHandler(object):
         self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
 
     def generateMask(self, iterations=150, smoothing=0, lambda1=1, lambda2=2, std=1, boxsize=128,
-                     smoothStairEdges=False, keep_largest=True):
+                     smoothStairEdges=False, keep_largest=True, dust_size=None):
         '''Generate automatically a binary protein mask based on a combination of snakes and
         Otsu method.
             :param int iterations: Number of iterations for computing the snake mask.
@@ -362,6 +363,16 @@ class ImageHandler(object):
             finalDimension = ori_boxsize * np.ones(len(data.shape))
             acwe_ls1 = resize(acwe_ls1.astype(bool), finalDimension).astype(np.float32)
 
+        # Remove dust
+        if dust_size is not None:
+            acwe_ls1 = opening(acwe_ls1.astype(bool), ball(5))
+            labels = label(acwe_ls1)
+            assert (labels.max() != 0)  # assume at least 1 CC
+            keep_regions = (np.argwhere(np.bincount(labels.flat)[1:] > dust_size) + 1)
+            aux = np.zeros(acwe_ls1.shape)
+            for lid in keep_regions:
+                aux += labels == lid
+            acwe_ls1 = aux.astype(np.float32)
 
         if smoothStairEdges:
             acwe_ls1 = (median_filter(acwe_ls1, size=5) >= 0.001).astype(np.float32)

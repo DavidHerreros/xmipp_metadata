@@ -1,0 +1,60 @@
+{% set name = "xmipp_metadata" %}
+{% set version = "1.0.8" %}
+
+package:
+  name: "{{ name|lower }}"
+  version: "{{ version }}"
+
+source:
+  path: ..
+
+build:
+  number: 0
+  script: "{{ PYTHON }} -m pip install . -vv"
+
+requirements:
+  host:
+    - emfile
+    - emtable
+    - morphsnakes
+    - mrcfile
+    - numpy <=1.23.0
+    - pandas
+    - pillow ==8.4.0   # [ py == 36 ]
+    - pillow ==9.2.0   # [ py >= 37 ]
+    - pip
+    - python
+    - scikit-image
+    - starfile
+  run:
+    - emfile
+    - emtable
+    - morphsnakes
+    - mrcfile
+    - numpy <=1.23.0
+    - pandas
+    - pillow ==8.4.0   # [ py == 36 ]
+    - pillow ==9.2.0   # [ py >= 37 ]
+    - python
+    - scikit-image
+    - starfile
+
+test:
+  imports:
+    - xmipp_metadata
+    - xmipp_metadata.image_handler
+    - xmipp_metadata.metadata
+    - xmipp_metadata.tests
+
+about:
+  home: "https://github.com/DavidHerreros/xmipp_metadata"
+  license: UNKNOWN
+  license_family: OTHER
+  license_file: 
+  summary: "Package to handle Xmipp Metadata and image binary data"
+  doc_url: 
+  dev_url: 
+
+extra:
+  recipe-maintainers:
+    - your-github-id-here

@@ -37,6 +37,12 @@ jobs:
       run: |
         python setup.py sdist bdist_wheel
         twine upload dist/* -c "${{ secrets.PYPI_COMMENT }}"
+    - name: Publish to Conda
+      uses: fcakyon/conda-publish-action@v1.3
+      with:
+        subdir: 'conda'
+        anacondatoken: ${{ secrets.ANACONDA_TOKEN }}
+        platforms: 'linux'
     - name: Get version and tag
       run: |
         export PACKAGE_VERSION=$(python -c "import $FOLDER_WITH_VERSION; print('VERSION', 'v'+$FOLDER_WITH_VERSION.__version__)" | grep VERSION | sed "s/VERSION //g")

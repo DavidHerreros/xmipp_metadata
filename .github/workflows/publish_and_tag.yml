@@ -23,7 +23,7 @@ jobs:
     - name: Set up MPI
       uses: mpi4py/setup-mpi@v1
     - name: Set up Python
-      uses: actions/setup-python@v2
+      uses: actions/setup-python@v3
       with:
         python-version: '3.8'
     - name: Install dependencies
@@ -37,6 +37,10 @@ jobs:
       run: |
         python setup.py sdist bdist_wheel
         twine upload dist/* -c "${{ secrets.PYPI_COMMENT }}"
+    - name: Add conda to system path
+      run: |
+         # $CONDA is an environment variable pointing to the root of the miniconda directory
+         echo $CONDA/bin >> $GITHUB_PATH
     - name: Publish to Conda
       uses: conda-incubator/setup-miniconda@v2
       with:

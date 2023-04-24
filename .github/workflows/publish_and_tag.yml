@@ -37,6 +37,7 @@ jobs:
     - name: Publish to Conda
       run: |
         conda init bash
+        source ~/.bashrc
         conda activate
         conda config --add channels conda-forge
         conda config --add channels dherreros

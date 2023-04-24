@@ -6,5 +6,5 @@ starfile
 mrcfile
 emfile
 emtable
-scikit-image<=0.20.0
+scikit-image<=0.19.3
 morphsnakes

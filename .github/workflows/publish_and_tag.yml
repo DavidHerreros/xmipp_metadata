@@ -42,7 +42,7 @@ jobs:
         conda config --add channels dherreros
         conda install -y anaconda-client conda-build conda-verify
         anaconda login --username ${{ secrets.ANACONDA_USERNAME }} --password ${{ secrets.ANACONDA_PASSWORD }}
-        conda build conda/conda_build_config.yaml
+        conda build conda/
         anaconda upload miniconda/conda-bld/linux-64/xmipp_metadata*
     - name: Build and publish Pypi
       env:

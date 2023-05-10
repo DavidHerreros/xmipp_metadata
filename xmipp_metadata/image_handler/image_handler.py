@@ -305,7 +305,8 @@ class ImageHandler(object):
         self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
 
     def generateMask(self, iterations=150, smoothing=0, lambda1=1, lambda2=2, std=1, boxsize=128,
-                     smoothStairEdges=False, keep_largest=True, dust_size=None):
+                     smoothStairEdges=False, keep_largest=True, dust_size=None,
+                     threshold="otsu"):
         '''Generate automatically a binary protein mask based on a combination of snakes and
         Otsu method.
             :param int iterations: Number of iterations for computing the snake mask.
@@ -329,6 +330,8 @@ class ImageHandler(object):
             :param bool keep_largest: Keep the largest component only detected by the snakes mask. This will help the
                                       posterior Otsu thresholding step to find the appropriate threshold to segment the
                                       protein.
+            :param str threshold: Threshold method use to improve the snakes masking. Valid options are:
+                                  ["isodata", "li", "mean", "minimum", "otsu", "triangle", "yen"]
         '''
         # Read the data
         data = np.squeeze(self.getData())
@@ -378,7 +381,8 @@ class ImageHandler(object):
             acwe_ls1 = (median_filter(acwe_ls1, size=5) >= 0.001).astype(np.float32)
 
         data_ori = data_ori * acwe_ls1
-        acwe_ls1 = (data_ori >= filters.threshold_otsu(data_ori)).astype(np.float32)
+        threshold_fun = getattr(filters, "threshold_" + threshold)
+        acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
 
         return acwe_ls1
 

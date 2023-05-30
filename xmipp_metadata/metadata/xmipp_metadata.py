@@ -75,7 +75,11 @@ class XmippMetaData(object):
             # binary_file = binary_file.with_suffix(".mrc")
             # self.binaries = mrcfile.mmap(binary_file, mode='r+')
 
-            self.binaries = ImageHandler(binary_file)
+            if os.path.isfile(binary_file):
+                self.binaries = ImageHandler(binary_file)
+            else:
+                print("No binaries found for this metadata, no images will be accesible")
+                self.binaries = None
 
             # Fill non-existing columns
             remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))

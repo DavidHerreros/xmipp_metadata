@@ -283,7 +283,11 @@ class ImageHandler(object):
 
         boxSize = int(2 * radius) if boxSize is None else boxSize
         radius = 0.5 * boxSize if radius is None else radius
-        center = (radius, radius) if center is None else center
+
+        if boxSize is not None:
+            center = (0.5 * boxSize, 0.5 * boxSize)
+        elif radius is not None:
+            center = (radius, radius)
 
         # Create circular mask
         if is3D:

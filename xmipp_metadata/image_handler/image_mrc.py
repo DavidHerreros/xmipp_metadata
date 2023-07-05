@@ -36,6 +36,8 @@ class ImageMRC(object):
     Class to read an MRC file
     '''
 
+    DEBUG = False
+
     def __init__(self, filename=None):
         if filename:
             self.read(filename)
@@ -46,7 +48,8 @@ class ImageMRC(object):
         '''
         Close the current file before deleting
         '''
-        print("File closed succesfully!")
+        if self.DEBUG:
+            print("File closed succesfully!")
 
     def __len__(self):
         return self.mrc_handle.header["nz"]

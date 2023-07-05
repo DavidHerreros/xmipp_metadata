@@ -39,6 +39,7 @@ class ImageSpider(object):
     HEADER_OFFSET = 1024
     FLOAT32_BYTES = 4
     TYPE = None
+    DEBUG = False
 
     def __init__(self, filename=None):
         if filename:
@@ -53,7 +54,8 @@ class ImageSpider(object):
         Close the current file before deleting
         '''
         self.close()
-        print("File closed succesfully!")
+        if self.DEBUG:
+            print("File closed succesfully!")
 
     def __len__(self):
         if self.TYPE == "stack":

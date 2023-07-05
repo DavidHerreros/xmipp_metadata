@@ -69,18 +69,6 @@ class XmippMetaData(object):
             elif readFrom == "EMTable":
                 self.table = emtable_2_pandas(file_name)
 
-            binary_file = self.getMetadataItems(0, 'image')
-            binary_file = Path(binary_file[0].split('@')[-1])
-
-            # binary_file = binary_file.with_suffix(".mrc")
-            # self.binaries = mrcfile.mmap(binary_file, mode='r+')
-
-            if os.path.isfile(binary_file):
-                self.binaries = ImageHandler(binary_file)
-            else:
-                print("No binaries found for this metadata, no images will be accesible")
-                self.binaries = None
-
             # Fill non-existing columns
             remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
             for label in remain:
@@ -88,7 +76,6 @@ class XmippMetaData(object):
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
-            self.binaries = None
 
     def __len__(self):
         return self.table.shape[0]
@@ -233,13 +220,21 @@ class XmippMetaData(object):
             :param row_id (list - int) --> Row indices from where to read the images
             :returns: Images from metadata as Numpy array (N x Y x X)
         '''
-        stack_id = self.getMetadataItems(row_id, 'image')
-        if "@" in stack_id[0]:
-            stack_id = [int(path.split('@')[0]) - 1 for path in stack_id]
-        else:
-            stack_id = row_id
+        images_rows = self.getMetadataItems(row_id, 'image')
+        stack_id = {}
+        for row in images_rows:
+            image_id, path = row.split('@') if "@" in row else (row_id, row)
+            if path not in stack_id.keys():
+                stack_id[path] = [int(image_id), ]
+            else:
+                stack_id[path].append(int(image_id))
 
-        return self.binaries[stack_id]
+        # Read binary file (if needed)
+        images = []
+        for key, values in stack_id.items():
+            images.append(ImageHandler(key)[values])
+
+        return np.asarray(images)
 
     def getMetaDataLabels(self):
         '''

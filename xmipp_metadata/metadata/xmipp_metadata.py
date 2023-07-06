@@ -51,6 +51,7 @@ class XmippMetaData(object):
             - EMTable: Read the metadata file as a EMTable, which will be converted to Pandas later
     '''
 
+    DEBUG = False
     DEFAULT_COLUMN_NAMES = ['anglePsi', 'angleRot', 'angleTilt', 'ctfVoltage', 'ctfDefocusU',
                             'ctfDefocusV', 'ctfDefocusAngle', 'ctfSphericalAberration', 'ctfQ0',
                             'enabled', 'flip', 'image', 'itemId', 'micrograph', 'micrographId',
@@ -149,8 +150,8 @@ class XmippMetaData(object):
         '''
         Closes the Metadata file and binaries to save memory
         '''
-        self.binaries.close()
-        print("Binaries and MetaData closed successfully!")
+        if self.DEBUG:
+            print("Binaries and MetaData closed successfully!")
 
     def shape(self):
         '''
@@ -225,16 +226,16 @@ class XmippMetaData(object):
         for row in images_rows:
             image_id, path = row.split('@') if "@" in row else (row_id, row)
             if path not in stack_id.keys():
-                stack_id[path] = [int(image_id), ]
+                stack_id[path] = [int(image_id) - 1, ]
             else:
-                stack_id[path].append(int(image_id))
+                stack_id[path].append(int(image_id) - 1)
 
         # Read binary file (if needed)
         images = []
         for key, values in stack_id.items():
             images.append(ImageHandler(key)[values])
 
-        return np.asarray(images)
+        return np.squeeze(np.asarray(images))
 
     def getMetaDataLabels(self):
         '''

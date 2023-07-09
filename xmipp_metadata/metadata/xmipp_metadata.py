@@ -185,7 +185,7 @@ class XmippMetaData(object):
             :param columns_id (list - string, int) --> Columns names/indices to be extracted
             :return: sliced metadata as Numpy array
         '''
-        if isinstance(rows_id, (list, np.ndarray)) and len(rows_id) > 1:
+        if isinstance(rows_id, (list, np.ndarray)):
             return self.table.loc[rows_id, columns_id].to_numpy().copy()
         else:
             return np.asarray([self.table.loc[rows_id, columns_id]])
@@ -224,7 +224,6 @@ class XmippMetaData(object):
         images_rows = self.getMetadataItems(row_id, 'image')
         stack_id = {}
         for row in images_rows:
-            row = row[0] if isinstance(row, np.ndarray) else row
             image_id, path = row.split('@') if "@" in row else (row_id, row)
             if path not in stack_id.keys():
                 stack_id[path] = [int(image_id) - 1, ]

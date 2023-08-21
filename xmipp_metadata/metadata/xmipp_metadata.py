@@ -60,20 +60,7 @@ class XmippMetaData(object):
 
     def __init__(self, file_name, readFrom="Auto"):
         if file_name:
-            if readFrom == "Auto":
-                try:
-                    self.table = starfile.read(file_name)
-                except ValueError:
-                    self.table = emtable_2_pandas(file_name)
-            elif readFrom == "Pandas":
-                self.table = starfile.read(file_name)
-            elif readFrom == "EMTable":
-                self.table = emtable_2_pandas(file_name)
-
-            # Fill non-existing columns
-            remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
-            for label in remain:
-                self.table[label] = 0.0
+            self.read(file_name, readFrom)
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
@@ -94,16 +81,29 @@ class XmippMetaData(object):
     def __setitem__(self, key, value):
         self.table.loc[key] = value
 
-    def read(self, file_name):
+    def read(self, file_name, readFrom="Auto"):
         '''
         Read a metadata file
             :param file_name (string) --> Path to metadata file
         '''
-        self.table = starfile.read(file_name)
+        if readFrom == "Auto":
+            try:
+                self.table = starfile.read(file_name)
+            except ValueError:
+                self.table = emtable_2_pandas(file_name)
+        elif readFrom == "Pandas":
+            self.table = starfile.read(file_name)
+        elif readFrom == "EMTable":
+            self.table = emtable_2_pandas(file_name)
+
         binary_file = self.getMetadataItems(0, 'image')
         binary_file = Path(binary_file[0].split('@')[-1])
 
-        self.binaries = ImageHandler(binary_file)
+        try:
+            self.binaries = ImageHandler(binary_file)
+            _ = self.getMetaDataImage(0)
+        except FileNotFoundError:
+            self.binaries = None
 
         # Fill non-existing columns
         remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))

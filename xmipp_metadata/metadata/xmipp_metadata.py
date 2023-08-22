@@ -64,7 +64,7 @@ class XmippMetaData(object):
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
-            self.binaries = None
+            self.binaries = False
 
     def __len__(self):
         return self.table.shape[0]
@@ -97,14 +97,11 @@ class XmippMetaData(object):
         elif readFrom == "EMTable":
             self.table = emtable_2_pandas(file_name)
 
-        binary_file = self.getMetadataItems(0, 'image')
-        binary_file = Path(binary_file[0].split('@')[-1])
-
         try:
-            self.binaries = ImageHandler(binary_file)
+            self.binaries = True
             _ = self.getMetaDataImage(0)
         except FileNotFoundError:
-            self.binaries = None
+            self.binaries = False
 
         # Fill non-existing columns
         remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
@@ -222,21 +219,24 @@ class XmippMetaData(object):
             :param row_id (list - int) --> Row indices from where to read the images
             :returns: Images from metadata as Numpy array (N x Y x X)
         '''
-        images_rows = self.getMetadataItems(row_id, 'image')
-        stack_id = {}
-        for row in images_rows:
-            image_id, path = row.split('@') if "@" in row else (row_id, row)
-            if path not in stack_id.keys():
-                stack_id[path] = [int(image_id) - 1, ]
-            else:
-                stack_id[path].append(int(image_id) - 1)
+        if self.binaries:
+            images_rows = self.getMetadataItems(row_id, 'image')
+            stack_id = {}
+            for row in images_rows:
+                image_id, path = row.split('@') if "@" in row else (row_id, row)
+                if path not in stack_id.keys():
+                    stack_id[path] = [int(image_id) - 1, ]
+                else:
+                    stack_id[path].append(int(image_id) - 1)
 
-        # Read binary file (if needed)
-        images = []
-        for key, values in stack_id.items():
-            images.append(ImageHandler(key)[values])
+            # Read binary file (if needed)
+            images = []
+            for key, values in stack_id.items():
+                images.append(ImageHandler(key)[values])
 
-        return np.squeeze(np.asarray(images))
+            return np.squeeze(np.asarray(images))
+        else:
+            print("Binaries not found...")
 
     def getMetaDataLabels(self):
         '''

@@ -64,6 +64,7 @@ class XmippMetaData(object):
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
+            self.binaries = None
 
     def __len__(self):
         return self.table.shape[0]

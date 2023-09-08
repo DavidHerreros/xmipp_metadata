@@ -64,3 +64,8 @@ metadata.write(filename=os.path.join("test_outputs", "test_same_paths.xmd"))
 
 # Write metadata (update paths)
 metadata.write(filename=os.path.join("test_outputs", "test_new_paths.xmd"), updateImagePaths=True)
+
+
+# Merge metadata (duplicate entries)
+metadata.concatenateMetadata(metadata)
+metadata.write(filename=os.path.join("test_outputs", "test_merged_duplicated.xmd"))

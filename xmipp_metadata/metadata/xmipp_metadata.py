@@ -77,7 +77,11 @@ class XmippMetaData(object):
             yield row
 
     def __getitem__(self, item):
-        return self.table.loc[item].to_numpy().copy()
+        extracted = self.table.loc[item]
+        if isinstance(extracted, pd.Series):
+            return extracted.to_numpy().copy()
+        else:
+            return extracted
 
     def __setitem__(self, key, value):
         self.table.loc[key] = value
@@ -234,7 +238,7 @@ class XmippMetaData(object):
             for key, values in stack_id.items():
                 images.append(ImageHandler(key)[values])
 
-            return np.squeeze(np.asarray(images))
+            return np.squeeze(np.vstack(images))
         else:
             print("Binaries not found...")
 
@@ -249,3 +253,12 @@ class XmippMetaData(object):
         :returns: True or False depending on whether the metadata label is stored in the metadata
         '''
         return label in self.getMetaDataLabels()
+
+    def concatenateMetadata(self, md):
+        '''
+        Concatenates a metadata file to the current metadata file
+        '''
+        if isinstance(md, str):
+            md = XmippMetaData(md)
+
+        self.table = pd.concat([self.table, md.table])

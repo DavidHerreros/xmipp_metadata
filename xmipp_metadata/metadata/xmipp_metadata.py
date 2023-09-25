@@ -78,7 +78,7 @@ class XmippMetaData(object):
 
     def __getitem__(self, item):
         extracted = self.table.loc[item]
-        if isinstance(extracted, pd.Series):
+        if hasattr(extracted, "to_numpy"):
             return extracted.to_numpy().copy()
         else:
             return extracted

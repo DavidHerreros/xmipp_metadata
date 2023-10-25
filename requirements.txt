@@ -2,7 +2,7 @@ numpy<=1.23.4
 pillow==8.4.0; python_version == '3.6'
 pillow<=9.5.0; python_version >= '3.7'
 pandas<=2.0.0
-starfile<0.5.*
+starfile!=0.5.0
 mrcfile
 emfile
 emtable

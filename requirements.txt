@@ -1,7 +1,7 @@
-numpy<=1.23.4
+numpy<=1.23.5
 pillow==8.4.0; python_version == '3.6'
 pillow<=9.5.0; python_version >= '3.7'
-pandas<=2.0.0
+pandas<=2.1.4
 starfile!=0.5.0
 mrcfile
 emfile

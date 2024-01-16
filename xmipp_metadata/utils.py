@@ -45,8 +45,7 @@ def emtable_2_pandas(file_name):
         row = row._asdict()
         for key, value in row.items():
             if isinstance(value, str) and not "@" in value:
-                value = np.fromstring(value, sep=" ")
-                row[key] = ','.join([str(num) for num in value])
+                row[key] = value.replace(" ", ",")
         pd_table.append(pd.DataFrame([row]))
 
     return pd.concat(pd_table, ignore_index=True)

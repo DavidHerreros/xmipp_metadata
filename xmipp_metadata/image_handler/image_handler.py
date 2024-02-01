@@ -55,6 +55,7 @@ class ImageHandler(object):
     '''
 
     BINARIES = None
+    DEBUG = False
 
     def __init__(self, binary_file=None):
         if binary_file:
@@ -97,7 +98,8 @@ class ImageHandler(object):
     def __del__(self):
         if self.BINARIES is not None and isinstance(self.BINARIES, ImageSpider):
             self.BINARIES.close()
-        print("File closed succesfully!")
+        if self.DEBUG:
+            print("File closed succesfully!")
 
     def read(self, binary_file):
         '''

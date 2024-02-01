@@ -51,6 +51,7 @@ class XmippMetaData(object):
             - EMTable: Read the metadata file as a EMTable, which will be converted to Pandas later
     '''
 
+    DEBUG = False
     DEFAULT_COLUMN_NAMES = ['anglePsi', 'angleRot', 'angleTilt', 'ctfVoltage', 'ctfDefocusU',
                             'ctfDefocusV', 'ctfDefocusAngle', 'ctfSphericalAberration', 'ctfQ0',
                             'enabled', 'flip', 'image', 'itemId', 'micrograph', 'micrographId',
@@ -59,36 +60,11 @@ class XmippMetaData(object):
 
     def __init__(self, file_name, readFrom="Auto"):
         if file_name:
-            if readFrom == "Auto":
-                try:
-                    self.table = starfile.read(file_name)
-                except ValueError:
-                    self.table = emtable_2_pandas(file_name)
-            elif readFrom == "Pandas":
-                self.table = starfile.read(file_name)
-            elif readFrom == "EMTable":
-                self.table = emtable_2_pandas(file_name)
-
-            binary_file = self.getMetadataItems(0, 'image')
-            binary_file = Path(binary_file[0].split('@')[-1])
-
-            # binary_file = binary_file.with_suffix(".mrc")
-            # self.binaries = mrcfile.mmap(binary_file, mode='r+')
-
-            if os.path.isfile(binary_file):
-                self.binaries = ImageHandler(binary_file)
-            else:
-                print("No binaries found for this metadata, no images will be accesible")
-                self.binaries = None
-
-            # Fill non-existing columns
-            remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
-            for label in remain:
-                self.table[label] = 0.0
+            self.read(file_name, readFrom)
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
-            self.binaries = None
+            self.binaries = False
 
     def __len__(self):
         return self.table.shape[0]
@@ -101,21 +77,35 @@ class XmippMetaData(object):
             yield row
 
     def __getitem__(self, item):
-        return self.table.loc[item].to_numpy().copy()
+        extracted = self.table.loc[item]
+        if hasattr(extracted, "to_numpy"):
+            return extracted.to_numpy().copy()
+        else:
+            return extracted
 
     def __setitem__(self, key, value):
         self.table.loc[key] = value
 
-    def read(self, file_name):
+    def read(self, file_name, readFrom="Auto"):
         '''
         Read a metadata file
             :param file_name (string) --> Path to metadata file
         '''
-        self.table = starfile.read(file_name)
-        binary_file = self.getMetadataItems(0, 'image')
-        binary_file = Path(binary_file[0].split('@')[-1])
+        if readFrom == "Auto":
+            try:
+                self.table = starfile.read(file_name)
+            except ValueError:
+                self.table = emtable_2_pandas(file_name)
+        elif readFrom == "Pandas":
+            self.table = starfile.read(file_name)
+        elif readFrom == "EMTable":
+            self.table = emtable_2_pandas(file_name)
 
-        self.binaries = ImageHandler(binary_file)
+        try:
+            self.binaries = True
+            _ = self.getMetaDataImage(0)
+        except FileNotFoundError:
+            self.binaries = False
 
         # Fill non-existing columns
         remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
@@ -162,8 +152,8 @@ class XmippMetaData(object):
         '''
         Closes the Metadata file and binaries to save memory
         '''
-        self.binaries.close()
-        print("Binaries and MetaData closed successfully!")
+        if self.DEBUG:
+            print("Binaries and MetaData closed successfully!")
 
     def shape(self):
         '''
@@ -197,7 +187,7 @@ class XmippMetaData(object):
             :param columns_id (list - string, int) --> Columns names/indices to be extracted
             :return: sliced metadata as Numpy array
         '''
-        if isinstance(rows_id, (list, np.ndarray)) and len(rows_id) > 1:
+        if isinstance(rows_id, (list, np.ndarray)):
             return self.table.loc[rows_id, columns_id].to_numpy().copy()
         else:
             return np.asarray([self.table.loc[rows_id, columns_id]])
@@ -233,13 +223,24 @@ class XmippMetaData(object):
             :param row_id (list - int) --> Row indices from where to read the images
             :returns: Images from metadata as Numpy array (N x Y x X)
         '''
-        stack_id = self.getMetadataItems(row_id, 'image')
-        if "@" in stack_id[0]:
-            stack_id = [int(path.split('@')[0]) - 1 for path in stack_id]
-        else:
-            stack_id = row_id
+        if self.binaries:
+            images_rows = self.getMetadataItems(row_id, 'image')
+            stack_id = {}
+            for row in images_rows:
+                image_id, path = row.split('@') if "@" in row else (row_id, row)
+                if path not in stack_id.keys():
+                    stack_id[path] = [int(image_id) - 1, ]
+                else:
+                    stack_id[path].append(int(image_id) - 1)
 
-        return self.binaries[stack_id]
+            # Read binary file (if needed)
+            images = []
+            for key, values in stack_id.items():
+                images.append(ImageHandler(key)[values])
+
+            return np.squeeze(np.vstack(images))
+        else:
+            print("Binaries not found...")
 
     def getMetaDataLabels(self):
         '''
@@ -252,3 +253,12 @@ class XmippMetaData(object):
         :returns: True or False depending on whether the metadata label is stored in the metadata
         '''
         return label in self.getMetaDataLabels()
+
+    def concatenateMetadata(self, md):
+        '''
+        Concatenates a metadata file to the current metadata file
+        '''
+        if isinstance(md, str):
+            md = XmippMetaData(md)
+
+        self.table = pd.concat([self.table, md.table])

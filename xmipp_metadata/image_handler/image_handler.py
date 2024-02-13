@@ -32,11 +32,12 @@ import numpy as np
 from skimage.transform import rescale, resize, warp
 from skimage import filters
 from skimage.measure import label
-from skimage.morphology import opening, ball
+from skimage.morphology import opening, ball, convex_hull_image
 
 import morphsnakes as ms
 
 from scipy.ndimage.filters import gaussian_filter, median_filter
+from scipy.spatial import ConvexHull, Delaunay
 
 from .image_mrc import ImageMRC
 
@@ -310,8 +311,44 @@ class ImageHandler(object):
         data_noise = data + noise
         self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
 
+    def __fillHull(self, image):
+        """
+        Compute the convex hull of the given binary image and
+        return a mask of the filled hull.
+
+        Adapted from:
+        https://stackoverflow.com/a/46314485/162094
+        This version is slightly (~40%) faster for 3D volumes,
+        by being a little more stingy with RAM.
+        """
+        # (The variable names below assume 3D input,
+        # but this would still work in 4D, etc.)
+
+        assert (np.array(image.shape) <= np.iinfo(np.int16).max).all(), \
+            f"This function assumes your image is smaller than {2 ** 15} in each dimension"
+
+        points = np.argwhere(image).astype(np.int16)
+        hull = ConvexHull(points)
+        deln = Delaunay(points[hull.vertices])
+
+        # Instead of allocating a giant array for all indices in the volume,
+        # just iterate over the slices one at a time.
+        idx_2d = np.indices(image.shape[1:], np.int16)
+        idx_2d = np.moveaxis(idx_2d, 0, -1)
+
+        idx_3d = np.zeros((*image.shape[1:], image.ndim), np.int16)
+        idx_3d[:, :, 1:] = idx_2d
+
+        mask = np.zeros_like(image, dtype=bool)
+        for z in range(len(image)):
+            idx_3d[:, :, 0] = z
+            s = deln.find_simplex(idx_3d)
+            mask[z, (s != -1)] = 1
+
+        return mask
+
     def generateMask(self, iterations=150, smoothing=0, lambda1=1, lambda2=2, std=1, boxsize=128,
-                     smoothStairEdges=False, keep_largest=True, dust_size=None,
+                     smoothStairEdges=False, keep_largest=True, dust_size=None, convex=True, applyThreshold=True,
                      threshold="otsu"):
         '''Generate automatically a binary protein mask based on a combination of snakes and
         Otsu method.
@@ -338,6 +375,11 @@ class ImageHandler(object):
                                       protein.
             :param str threshold: Threshold method use to improve the snakes masking. Valid options are:
                                   ["isodata", "li", "mean", "minimum", "otsu", "triangle", "yen"]
+            :param float dust_size: Removes any connected component whose size is smaller than or equal to this value
+            :param bool convex: Determines whether to create convex mask from the estimated morphSnake mask before
+                                further processing it
+            :param bool applyThreshold: Determines whether to apply a final thresholding step to generate a tight mask
+                                        to the input image/volume
         '''
         # Read the data
         data = np.squeeze(self.getData())
@@ -385,10 +427,14 @@ class ImageHandler(object):
 
         if smoothStairEdges:
             acwe_ls1 = (median_filter(acwe_ls1, size=5) >= 0.001).astype(np.float32)
+        
+        if convex:
+            acwe_ls1 = self.__fillHull(acwe_ls1.astype(bool)).astype(float)
 
-        data_ori = data_ori * acwe_ls1
-        threshold_fun = getattr(filters, "threshold_" + threshold)
-        acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
+        if applyThreshold:
+            data_ori = data_ori * acwe_ls1
+            threshold_fun = getattr(filters, "threshold_" + threshold)
+            acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
 
         return acwe_ls1
 

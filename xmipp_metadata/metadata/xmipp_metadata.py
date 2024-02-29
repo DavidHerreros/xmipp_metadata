@@ -112,7 +112,7 @@ class XmippMetaData(object):
         for label in remain:
             self.table[label] = 0.0
 
-    def write(self, filename, overwrite=False, updateImagePaths=False):
+    def write(self, filename, overwrite=True, updateImagePaths=False):
         '''
         Write current metadata to file
         '''
@@ -179,6 +179,9 @@ class XmippMetaData(object):
         :param idx: (list - int) --> Rows indices to be set
         '''
         self.table.loc[idx, :] = rows
+        
+    def appendMetaDataRows(self, rows):
+        self.table.append(rows, ignore_index=True)
 
     def getMetadataItems(self, rows_id, columns_id):
         '''

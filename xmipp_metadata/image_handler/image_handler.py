@@ -128,7 +128,7 @@ class ImageHandler(object):
 
         return self
 
-    def write(self, data, filename=None, overwrite=False, sr=1.0):
+    def write(self, data, filename=None, overwrite=True, sr=1.0):
         if not overwrite and filename is None and len(self) != data.shape[0]:
             raise Exception("Cannot save file. Number of images "
                             "in new data is different. Please, set overwrite to True "

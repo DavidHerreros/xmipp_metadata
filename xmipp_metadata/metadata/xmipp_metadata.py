@@ -104,7 +104,7 @@ class XmippMetaData(object):
         try:
             self.binaries = True
             _ = self.getMetaDataImage(0)
-        except FileNotFoundError:
+        except (FileNotFoundError, KeyError):
             self.binaries = False
 
         # Fill non-existing columns

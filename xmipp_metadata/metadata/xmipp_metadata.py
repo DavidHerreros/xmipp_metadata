@@ -58,9 +58,26 @@ class XmippMetaData(object):
                             'scoreByVariance', 'scoreByGiniCoeff', 'shiftX', 'shiftY', 'shiftZ',
                             'xcoor', 'ycoor']
 
-    def __init__(self, file_name, readFrom="Auto"):
+    def __init__(self, file_name, readFrom="Auto", **kwargs):
         if file_name:
-            self.read(file_name, readFrom)
+            if file_name.split(".")[-1] in ["xmd", "star"]:
+                self.read(file_name, readFrom)
+            elif file_name.split(".")[-1] in ["stk", "mrcs"]:  # Create new metadata from images
+                # Fill metadata with images
+                num_images = len(ImageHandler(file_name))
+                angles = kwargs.pop("angles", np.zeros([num_images, 3]))
+                shifts = kwargs.pop("shifts", np.zeros([num_images, 2]))
+                COLUMN_DICT = {'anglePsi': angles[:, 2],
+                               'angleRot': angles[:, 0],
+                               'angleTilt': angles[:, 1],
+                               'enabled': np.ones(num_images, dtype=int),
+                               'image': [f"{id:06d}@{file_name}" for id in np.arange(1, num_images + 1, dtype=int)],
+                               'itemId': np.arange(1, num_images + 1, dtype=int),
+                               'shiftX': shifts[:, 0],
+                               'shiftY': shifts[:, 1],
+                               'shiftZ': np.zeros(num_images)}
+                self.table = pd.DataFrame.from_dict(COLUMN_DICT)
+                self.binaries = True
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)

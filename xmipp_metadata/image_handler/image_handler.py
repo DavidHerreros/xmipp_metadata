@@ -38,12 +38,15 @@ import morphsnakes as ms
 
 from scipy.ndimage.filters import gaussian_filter, median_filter
 from scipy.spatial import ConvexHull, Delaunay
+from scipy.spatial.transform import Rotation as R
 
 from .image_mrc import ImageMRC
 
 from .image_spider import ImageSpider
 
 from .image_em import ImageEM
+
+from xmipp_metadata.utils import fibonacci_sphere, compute_euler_angles, rotate_volume
 
 
 class ImageHandler(object):
@@ -437,6 +440,34 @@ class ImageHandler(object):
             acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
 
         return acwe_ls1
+
+    def generateProjections(self, num_projections, degrees=True):
+        """
+        Generate 2D projections of a 3D volume uniformly over the projection sphere.
+
+        Args:
+            volume (numpy.ndarray): 3D numpy array representing the volume.
+            num_projections (int): Number of projections to generate.
+
+        Returns:
+            projections (list of numpy.ndarray): List containing 2D projections.
+            euler_angles (numpy.ndarray): Array of shape (num_projections, 3) containing
+                                          Euler angles in ZYZ format for each projection.
+        """
+        # Read the data
+        volume = np.squeeze(self.getData())
+
+        directions = fibonacci_sphere(num_projections)
+        euler_angles = compute_euler_angles(directions)
+
+        projections = []
+        for angles in euler_angles:
+            rot = R.from_euler('zyz', angles).as_matrix()
+            rotated_volume = rotate_volume(volume, rot)
+            projection = rotated_volume.sum(axis=0)
+            projections.append(projection)
+
+        return np.stack(projections, axis=0), euler_angles
 
 
     def close(self):

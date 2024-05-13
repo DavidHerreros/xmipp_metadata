@@ -202,6 +202,9 @@ class XmippMetaData(object):
     def appendMetaDataRows(self, rows):
         self.table.append(rows, ignore_index=True)
 
+    def appendMetaData(self, md):
+        self.table = pd.concat([self.table, md.table])
+
     def getMetadataItems(self, rows_id, columns_id):
         '''
         Returns a slice of data in the metadata

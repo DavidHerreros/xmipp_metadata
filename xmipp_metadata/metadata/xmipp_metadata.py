@@ -67,6 +67,7 @@ class XmippMetaData(object):
                 num_images = len(ImageHandler(file_name))
                 angles = kwargs.pop("angles", np.zeros([num_images, 3]))
                 shifts = kwargs.pop("shifts", np.zeros([num_images, 2]))
+                res = {k: v for k, v in kwargs.items() if v is not None}
                 COLUMN_DICT = {'anglePsi': angles[:, 2],
                                'angleRot': angles[:, 0],
                                'angleTilt': angles[:, 1],
@@ -76,6 +77,7 @@ class XmippMetaData(object):
                                'shiftX': shifts[:, 0],
                                'shiftY': shifts[:, 1],
                                'shiftZ': np.zeros(num_images)}
+                COLUMN_DICT.update(res)
                 self.table = pd.DataFrame.from_dict(COLUMN_DICT)
                 self.binaries = True
 

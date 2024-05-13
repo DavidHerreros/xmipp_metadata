@@ -223,7 +223,7 @@ class ImageHandler(object):
         if isinstance(outputFn, str):
             self.write(data, outputFn, sr=new_sr, overwrite=overwrite)
         else:
-            return  data
+            return data
 
     def affineTransform(self, transformation, inputFn=None, outputFn=None, isStack=False, overwrite=False):
         if isinstance(inputFn, str):

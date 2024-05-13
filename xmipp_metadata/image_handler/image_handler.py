@@ -459,7 +459,7 @@ class ImageHandler(object):
 
         return acwe_ls1
 
-    def generateProjections(self, num_projections, degrees=True, volume=None, n_jobs=8, pad=2, useFourier=True):
+    def generateProjections(self, num_projections, degrees=True, volume=None, n_jobs=8, pad=0, useFourier=True):
         """
         Generate 2D projections of a 3D volume uniformly over the projection sphere.
 

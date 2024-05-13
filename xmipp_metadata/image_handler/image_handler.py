@@ -151,7 +151,7 @@ class ImageHandler(object):
         elif filename.suffix == ".em" or filename.suffix == ".ems":
             ImageEM().write(data, filename, overwrite=overwrite, sr=sr)
 
-    def convert(self, orig_file, dest_file, overwrite=False):
+    def convert(self, orig_file, dest_file, overwrite=True):
         self.read(orig_file)
         data = self.getData()
         self.write(data, dest_file, sr=self.getSamplingRate(), overwrite=overwrite)
@@ -184,7 +184,7 @@ class ImageHandler(object):
         self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
 
     def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
-                     isStack=False, overwrite=False):
+                     isStack=False, overwrite=True):
         if isinstance(inputFn, str):
             self.read(inputFn)
         data = np.squeeze(self.getData())
@@ -225,7 +225,7 @@ class ImageHandler(object):
         else:
             return data
 
-    def affineTransform(self, transformation, inputFn=None, outputFn=None, isStack=False, overwrite=False):
+    def affineTransform(self, transformation, inputFn=None, outputFn=None, isStack=False, overwrite=True):
         if isinstance(inputFn, str):
             self.read(inputFn)
         data = np.squeeze(self.getData())
@@ -321,7 +321,7 @@ class ImageHandler(object):
         else:
             return mask
 
-    def addNoise(self, input_file=None, output_file=None, std=1.0, avg=0.0, overwrite=False):
+    def addNoise(self, input_file=None, output_file=None, std=1.0, avg=0.0, overwrite=True):
         if isinstance(input_file, str):
             self.read(input_file)
         data = np.squeeze(self.getData())

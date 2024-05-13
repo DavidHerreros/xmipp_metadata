@@ -25,10 +25,10 @@
 # **************************************************************************
 
 
-import os
 import numpy as np
 from emtable import Table
 import pandas as pd
+from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.transform import Rotation as R
 from scipy.ndimage import affine_transform
 
@@ -71,10 +71,10 @@ def fibonacci_sphere(samples):
     y = np.sin(phi) * np.sin(theta)
     z = np.cos(phi)
 
-    return np.stack((x, y, z), axis=-1)
+    return np.stack((z, y, x), axis=-1)
 
 
-def compute_euler_angles(directions, degrees=True):
+def compute_rotations(directions):
     """
     Compute Euler angles (ZYZ convention) for given directions.
 
@@ -84,33 +84,30 @@ def compute_euler_angles(directions, degrees=True):
     Returns:
         numpy.ndarray: Array of shape (N, 3) containing Euler angles in ZYZ format.
     """
-    angles = []
+    rots = []
     for direction in directions:
-        z = np.array([0, 0, 1])
+        z = np.array([1, 0, 0])
         v = direction
         axis = np.cross(z, v)
         angle = np.arccos(np.dot(z, v) / (np.linalg.norm(z) * np.linalg.norm(v)))
-        rot = R.from_rotvec(angle * axis / np.linalg.norm(axis))
-        angles.append(rot.as_euler('zyz'))
-
-    if degrees:
-        conversion = 180.0 / np.pi
-    else:
-        conversion = 1.0
-
-    return conversion * np.array(angles)
+        if np.linalg.norm(axis) < 1e-6:
+            rot = R.from_euler('xyx', [0, 0, 0])
+        else:
+            rot = R.from_rotvec(angle * axis / np.linalg.norm(axis))
+        rots.append(rot.as_matrix())
+    return np.stack(rots, axis=0)
 
 
-def rotate_volume(volume, rotation_matrix):
+def rotate_project_volume(volume, rotation_matrix):
     """
-    Rotate a 3D volume using a given rotation matrix around its center.
+    Rotate and prject a 3D volume using a given rotation matrix around its center.
 
     Args:
         volume (numpy.ndarray): 3D numpy array representing the volume.
         rotation_matrix (numpy.ndarray): 3x3 rotation matrix.
 
     Returns:
-        numpy.ndarray: Rotated 3D volume.
+        numpy.ndarray: 2D projection.
     """
     # Get the center of the volume
     center = np.array(volume.shape) / 2.0
@@ -121,4 +118,39 @@ def rotate_volume(volume, rotation_matrix):
 
     # Apply affine transformation
     rotated_volume = affine_transform(volume, affine_mat[:3, :3], offset=affine_mat[:3, 3])
-    return rotated_volume
+    angles = R.from_matrix(rotation_matrix).as_euler("xyx")
+    return np.sum(rotated_volume, axis=0), angles
+
+# Fourier Slice Interpolator
+class FourierInterpolator:
+    def __init__(self, volume, pad):
+        # Compute the Fourier transform of the volume
+        self.size = volume.shape[0]
+        self.pad = pad
+        volume = np.pad(volume, int(0.25 * self.size * pad))
+        self.pad_size = volume.shape[0]
+        F = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(volume)))
+        self.k = np.linspace(-self.pad_size / 2, self.pad_size / 2, self.pad_size)
+        self.interpolator = RegularGridInterpolator(
+            (self.k, self.k, self.k), F, bounds_error=False, fill_value=0
+        )
+
+    def get_slice(self, rot):
+        # Create the grid for the desired slice
+        x = np.linspace(-self.pad_size / 2, self.pad_size / 2, self.size)
+        y = np.linspace(-self.pad_size / 2, self.pad_size / 2, self.size)
+        xx, yy = np.meshgrid(x, y, indexing='xy')
+
+        # Apply the rotation matrix to obtain Fourier coordinates
+        kx = rot[0, 0] * np.zeros_like(xx) + rot[0, 1] * yy + rot[0, 2] * xx
+        ky = rot[1, 0] * np.zeros_like(xx) + rot[1, 1] * yy + rot[1, 2] * xx
+        kz = rot[2, 0] * np.zeros_like(xx) + rot[2, 1] * yy + rot[2, 2] * xx
+
+        coords = np.stack([kx, ky, kz], axis=-1)
+        return (np.abs(np.fft.ifftshift(np.fft.ifft2(np.fft.fftshift(self.interpolator(coords))))) ** 2).copy()
+
+
+# Parallel Projection Computation using Joblib
+def compute_projection(rot, interpolator):
+    angles = R.from_matrix(rot).as_euler("xyx")
+    return interpolator.get_slice(rot), angles

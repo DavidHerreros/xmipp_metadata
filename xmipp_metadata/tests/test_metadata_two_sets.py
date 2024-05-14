@@ -83,3 +83,7 @@ print("Error for image 1 (against single set): %.3f" % error_image_1)
 image_2 = metadata_single.getMetaDataImage(99)
 error_image_2 = np.sqrt(np.mean((images[1] - image_2) ** 2))
 print("Error for image 2 (against single set): %.3f" % error_image_2)
+
+# Concat metadatas
+metadata_twice = XmippMetaData("input_particles.xmd")
+metadata_twice.appendMetaData(XmippMetaData("input_particles.xmd"))

@@ -205,11 +205,11 @@ class XmippMetaData(object):
         self.table.loc[idx, :] = rows
         
     def appendMetaDataRows(self, rows):
-        self.table.append(rows, ignore_index=True)
+        self.table.loc[len(self.table.index)] = rows
 
     def appendMetaData(self, md):
         md.table["itemId"] = len(self) + md.table["itemId"]
-        self.table = pd.concat([self.table, md.table])
+        self.table = pd.concat([self.table, md.table], ignore_index=True)
 
     def getMetadataItems(self, rows_id, columns_id):
         '''
@@ -257,19 +257,38 @@ class XmippMetaData(object):
         if self.binaries:
             images_rows = self.getMetadataItems(row_id, 'image')
             stack_id = {}
+            stack_order = {}
+            order_id = 0
             for row in images_rows:
                 image_id, path = row.split('@') if "@" in row else (row_id, row)
                 if path not in stack_id.keys():
                     stack_id[path] = [int(image_id) - 1, ]
+                    stack_order[path] = [order_id, ]
+                    order_id += 1
                 else:
                     stack_id[path].append(int(image_id) - 1)
+                    stack_order[path].append(order_id)
+                    order_id += 1
 
             # Read binary file (if needed)
             images = []
+            order = []
             for key, values in stack_id.items():
+                order.append(np.asarray(stack_order[key]))
                 images.append(ImageHandler(key)[values])
+            order = np.hstack(order)
+            images = np.squeeze(np.vstack(images))
 
-            return np.squeeze(np.vstack(images))
+            if order.size > 1:
+                # Create an empty array of the same shape as the original array
+                reordered_images = np.empty_like(images)
+
+                # Reorder the original array based on the order vector
+                reordered_images[order] = images
+
+                return reordered_images
+            else:
+                return images
         else:
             print("Binaries not found...")
 

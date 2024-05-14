@@ -165,7 +165,7 @@ class FourierInterpolator:
         projection = self.interpolator(rotated_coords.T).reshape(Z.shape)
         projection = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(projection))).real
 
-        return projection
+        return projection.copy()
 
 
 # Real space Slice Interpolator
@@ -220,7 +220,7 @@ class RealInterpolator:
         # Interpolate the Fourier values at the rotated coordinates
         interpolated_values = interpolator((rotated_Z, rotated_Y, rotated_X))
 
-        return np.sum(interpolated_values, axis=0)
+        return np.sum(interpolated_values, axis=0).copy()
 
 
 # Parallel Projection Computation using Joblib

@@ -76,7 +76,12 @@ class XmippMetaData(object):
                                'itemId': np.arange(1, num_images + 1, dtype=int),
                                'shiftX': shifts[:, 0],
                                'shiftY': shifts[:, 1],
-                               'shiftZ': np.zeros(num_images)}
+                               'shiftZ': np.zeros(num_images),
+                               'ctfVoltage': np.zeros(num_images),
+                               'ctfDefocusU': np.zeros(num_images),
+                               'ctfDefocusV': np.zeros(num_images),
+                               'ctfDefocusAngle': np.zeros(num_images),
+                               'ctfSphericalAberration': np.zeros(num_images)}
                 COLUMN_DICT.update(res)
                 self.table = pd.DataFrame.from_dict(COLUMN_DICT)
                 self.binaries = True
@@ -203,6 +208,7 @@ class XmippMetaData(object):
         self.table.append(rows, ignore_index=True)
 
     def appendMetaData(self, md):
+        md.table["itemId"] = len(self) + md.table["itemId"]
         self.table = pd.concat([self.table, md.table])
 
     def getMetadataItems(self, rows_id, columns_id):

@@ -224,10 +224,10 @@ ih.write(ih.getData() * mask, os.path.join("test_outputs", "test_generated_maske
 
 # Generate projections (Fourier)
 ih = ImageHandler(os.path.join("AK.vol"))
-volume = ih.scaleSplines(finalDimension=128)
+volume = ih.scaleSplines(finalDimension=64)
 print("Generating Fourier projections...")
 start_time = time.time()
-projections, angles = ih.generateProjections(10000, degrees=True, pad=0, useFourier=True, volume=volume,
+projections, angles = ih.generateProjections(500, degrees=True, pad=0, useFourier=True, volume=volume,
                                              n_jobs=20)
 end_time = time.time()
 print(end_time - start_time)

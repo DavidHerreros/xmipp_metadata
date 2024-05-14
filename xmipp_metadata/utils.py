@@ -26,11 +26,32 @@
 
 
 import numpy as np
+import math
 from emtable import Table
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.transform import Rotation as R
 from scipy.ndimage import affine_transform
+
+
+# epsilon for testing whether a number is close to zero
+_EPS = np.finfo(float).eps * 4.0
+
+# axis sequences for Euler angles
+_NEXT_AXIS = [1, 2, 0, 1]
+
+# map axes strings to/from tuples of inner axis, parity, repetition, frame
+_AXES2TUPLE = {
+    'sxyz': (0, 0, 0, 0), 'sxyx': (0, 0, 1, 0), 'sxzy': (0, 1, 0, 0),
+    'sxzx': (0, 1, 1, 0), 'syzx': (1, 0, 0, 0), 'syzy': (1, 0, 1, 0),
+    'syxz': (1, 1, 0, 0), 'syxy': (1, 1, 1, 0), 'szxy': (2, 0, 0, 0),
+    'szxz': (2, 0, 1, 0), 'szyx': (2, 1, 0, 0), 'szyz': (2, 1, 1, 0),
+    'rzyx': (0, 0, 0, 1), 'rxyx': (0, 0, 1, 1), 'ryzx': (0, 1, 0, 1),
+    'rxzx': (0, 1, 1, 1), 'rxzy': (1, 0, 0, 1), 'ryzy': (1, 0, 1, 1),
+    'rzxy': (1, 1, 0, 1), 'ryxy': (1, 1, 1, 1), 'ryxz': (2, 0, 0, 1),
+    'rzxz': (2, 0, 1, 1), 'rxyz': (2, 1, 0, 1), 'rzyz': (2, 1, 1, 1)}
+
+_TUPLE2AXES = dict((v, k) for k, v in _AXES2TUPLE.items())
 
 
 def emtable_2_pandas(file_name):
@@ -74,52 +95,37 @@ def fibonacci_sphere(samples):
     return np.stack((z, y, x), axis=-1)
 
 
-def compute_rotations(directions):
-    """
-    Compute Euler angles (ZYZ convention) for given directions.
+def fibonacci_hemisphere(n_points):
+    n_points *= 2
+    indices = np.arange(0, n_points, dtype=float) + 0.5
 
-    Args:
-        directions (numpy.ndarray): Array of shape (N, 3) containing directions.
+    phi = np.arccos(1 - 2 * indices / n_points)
+    theta = np.pi * (1 + 5 ** 0.5) * indices
 
-    Returns:
-        numpy.ndarray: Array of shape (N, 3) containing Euler angles in ZYZ format.
-    """
-    rots = []
-    for direction in directions:
-        z = np.array([1, 0, 0])
-        v = direction
-        axis = np.cross(z, v)
-        angle = np.arccos(np.dot(z, v) / (np.linalg.norm(z) * np.linalg.norm(v)))
-        if np.linalg.norm(axis) < 1e-6:
-            rot = R.from_euler('xyx', [0, 0, 0])
-        else:
-            rot = R.from_rotvec(angle * axis / np.linalg.norm(axis))
-        rots.append(rot.as_matrix())
-    return np.stack(rots, axis=0)
+    # Mask to only take the upper hemisphere
+    mask = (phi <= np.pi / 2)
+    phi = phi[mask]
+    theta = theta[mask]
+
+    return theta, phi
 
 
-def rotate_project_volume(volume, rotation_matrix):
-    """
-    Rotate and prject a 3D volume using a given rotation matrix around its center.
+def compute_rotations(theta, phi):
+    # Rotation about the z-axis by theta
+    Rz_theta = np.array([
+        [np.cos(theta), -np.sin(theta), 0],
+        [np.sin(theta), np.cos(theta), 0],
+        [0, 0, 1]
+    ])
+    # Rotation about the y-axis by phi
+    Ry_phi = np.array([
+        [np.cos(phi), 0, np.sin(phi)],
+        [0, 1, 0],
+        [-np.sin(phi), 0, np.cos(phi)]
+    ])
+    # Combined rotation matrix
+    return Ry_phi @ Rz_theta
 
-    Args:
-        volume (numpy.ndarray): 3D numpy array representing the volume.
-        rotation_matrix (numpy.ndarray): 3x3 rotation matrix.
-
-    Returns:
-        numpy.ndarray: 2D projection.
-    """
-    # Get the center of the volume
-    center = np.array(volume.shape) / 2.0
-    # Define the affine transformation matrix
-    affine_mat = np.eye(4)
-    affine_mat[:3, :3] = rotation_matrix
-    affine_mat[:3, 3] = center - rotation_matrix @ center
-
-    # Apply affine transformation
-    rotated_volume = affine_transform(volume, affine_mat[:3, :3], offset=affine_mat[:3, 3])
-    angles = R.from_matrix(rotation_matrix).as_euler("xyx")
-    return np.sum(rotated_volume, axis=0), angles
 
 # Fourier Slice Interpolator
 class FourierInterpolator:
@@ -129,28 +135,154 @@ class FourierInterpolator:
         self.pad = pad
         volume = np.pad(volume, int(0.25 * self.size * pad))
         self.pad_size = volume.shape[0]
-        F = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(volume)))
-        self.k = np.linspace(-self.pad_size / 2, self.pad_size / 2, self.pad_size)
+        self.F = np.fft.fftshift(np.fft.fftn(np.fft.ifftshift(volume)))
+        self.k = np.fft.fftshift(np.fft.fftfreq(volume.shape[0]))
         self.interpolator = RegularGridInterpolator(
-            (self.k, self.k, self.k), F, bounds_error=False, fill_value=0
+            (self.k, self.k, self.k), self.F, bounds_error=False, fill_value=0
         )
 
     def get_slice(self, rot):
-        # Create the grid for the desired slice
-        x = np.linspace(-self.pad_size / 2, self.pad_size / 2, self.size)
-        y = np.linspace(-self.pad_size / 2, self.pad_size / 2, self.size)
-        xx, yy = np.meshgrid(x, y, indexing='xy')
+        # Define the grid points in each dimension
+        z = np.fft.fftshift(np.fft.fftfreq(self.F.shape[0]))
+        y = np.fft.fftshift(np.fft.fftfreq(self.F.shape[1]))
+        x = np.fft.fftshift(np.fft.fftfreq(self.F.shape[2]))
 
-        # Apply the rotation matrix to obtain Fourier coordinates
-        kx = rot[0, 0] * np.zeros_like(xx) + rot[0, 1] * yy + rot[0, 2] * xx
-        ky = rot[1, 0] * np.zeros_like(xx) + rot[1, 1] * yy + rot[1, 2] * xx
-        kz = rot[2, 0] * np.zeros_like(xx) + rot[2, 1] * yy + rot[2, 2] * xx
+        # Define the slice you want to interpolate in Fourier space
+        z_slice_index = self.F.shape[0] // 2
 
-        coords = np.stack([kx, ky, kz], axis=-1)
-        return (np.abs(np.fft.ifftshift(np.fft.ifft2(np.fft.fftshift(self.interpolator(coords))))) ** 2).copy()
+        # Create a meshgrid for the slice in Fourier space
+        Y, X = np.meshgrid(y, x, indexing='ij')
+        Z = np.full_like(X, z[z_slice_index])
+
+        # Flatten the coordinate arrays for transformation
+        coords = np.array([X.ravel(), Y.ravel(), Z.ravel()])
+
+        # Rotate the coordinates using the rotation matrix
+        rotated_coords = np.dot(rot, coords)
+        rotated_coords = np.vstack([rotated_coords[2, :], rotated_coords[1, :], rotated_coords[0, :]])
+
+        # Get projection in real space
+        projection = self.interpolator(rotated_coords.T).reshape(Z.shape)
+        projection = np.fft.fftshift(np.fft.ifft2(np.fft.ifftshift(projection))).real
+
+        return projection
+
+
+# Real space Slice Interpolator
+class RealInterpolator:
+    def __init__(self, volume):
+        # Compute the Fourier transform of the volume
+        self.size = volume.shape[0]
+        self.pad_size = volume.shape[0]
+        self.volume = volume
+        self.k = np.fft.fftshift(np.fft.fftfreq(volume.shape[0]))
+        self.interpolator = RegularGridInterpolator(
+            (self.k, self.k, self.k), self.volume, bounds_error=False, fill_value=0
+        )
+
+    def get_slice(self, rot):
+        """
+        Rotate and prject a 3D volume using a given rotation matrix around its center.
+
+        Args:
+            volume (numpy.ndarray): 3D numpy array representing the volume.
+            rotation_matrix (numpy.ndarray): 3x3 rotation matrix.
+
+        Returns:
+            numpy.ndarray: 2D projection.
+        """
+        # Volume shape
+        volume_size = self.volume.shape
+
+        # Define the grid points in each dimension
+        z = np.fft.fftshift(np.fft.fftfreq(volume_size[0]))
+        y = np.fft.fftshift(np.fft.fftfreq(volume_size[1]))
+        x = np.fft.fftshift(np.fft.fftfreq(volume_size[2]))
+
+        # Create a meshgrid of coordinates in the Fourier domain
+        Z, Y, X = np.meshgrid(z, y, x, indexing='ij')
+
+        # Flatten the coordinate arrays for transformation
+        coords = np.array([X.ravel(), Y.ravel(), Z.ravel()])
+
+        # Rotate the coordinates using the rotation matrix
+        rotated_coords = np.dot(rot, coords)
+
+        # Reshape the rotated coordinates back to the original shape
+        rotated_Z = rotated_coords[2].reshape(Z.shape)
+        rotated_Y = rotated_coords[1].reshape(Y.shape)
+        rotated_X = rotated_coords[0].reshape(X.shape)
+
+        # 4. Define the grid interpolator
+        interpolator = RegularGridInterpolator((z, y, x), self.volume, method='linear', bounds_error=False,
+                                               fill_value=0)
+
+        # Interpolate the Fourier values at the rotated coordinates
+        interpolated_values = interpolator((rotated_Z, rotated_Y, rotated_X))
+
+        return np.sum(interpolated_values, axis=0)
 
 
 # Parallel Projection Computation using Joblib
 def compute_projection(rot, interpolator):
-    angles = R.from_matrix(rot).as_euler("xyx")
-    return interpolator.get_slice(rot), angles
+    angles = -np.asarray(euler_from_matrix(rot, "szyz"))
+    return interpolator.get_slice(np.linalg.inv(rot)), angles
+
+
+def euler_from_matrix(matrix, axes='sxyz'):
+    """Return Euler angles from rotation matrix for specified axis sequence.
+
+    axes : One of 24 axis sequences as string or encoded tuple
+
+    Note that many Euler angle triplets can describe one matrix.
+
+    >>> R0 = euler_matrix(1, 2, 3, 'syxz')
+    >>> al, be, ga = euler_from_matrix(R0, 'syxz')
+    >>> R1 = euler_matrix(al, be, ga, 'syxz')
+    >>> np.allclose(R0, R1)
+    True
+    >>> angles = (4*math.pi) * (np.random.random(3) - 0.5)
+    >>> for axes in _AXES2TUPLE.keys():
+    ...    R0 = euler_matrix(axes=axes, *angles)
+    ...    R1 = euler_matrix(axes=axes, *euler_from_matrix(R0, axes))
+    ...    if not np.allclose(R0, R1): print(axes, "failed")
+
+    """
+    try:
+        firstaxis, parity, repetition, frame = _AXES2TUPLE[axes.lower()]
+    except (AttributeError, KeyError):
+        _TUPLE2AXES[axes]  # validation
+        firstaxis, parity, repetition, frame = axes
+
+    i = firstaxis
+    j = _NEXT_AXIS[i + parity]
+    k = _NEXT_AXIS[i - parity + 1]
+
+    M = np.array(matrix, dtype=np.float64, copy=False)[:3, :3]
+    if repetition:
+        sy = math.sqrt(M[i, j] * M[i, j] + M[i, k] * M[i, k])
+        if sy > _EPS:
+            ax = math.atan2(M[i, j], M[i, k])
+            ay = math.atan2(sy, M[i, i])
+            az = math.atan2(M[j, i], -M[k, i])
+        else:
+            ax = math.atan2(-M[j, k], M[j, j])
+            ay = math.atan2(sy, M[i, i])
+            az = 0.0
+    else:
+        cy = math.sqrt(M[i, i] * M[i, i] + M[j, i] * M[j, i])
+        if cy > _EPS:
+            ax = math.atan2(M[k, j], M[k, k])
+            ay = math.atan2(-M[k, i], cy)
+            az = math.atan2(M[j, i], M[i, i])
+        else:
+            ax = math.atan2(-M[j, k], M[j, j])
+            ay = math.atan2(-M[k, i], cy)
+            az = 0.0
+
+    if parity:
+        ax, ay, az = -ax, -ay, -az
+    if frame:
+        ax, az = az, ax
+    return ax, ay, az
+

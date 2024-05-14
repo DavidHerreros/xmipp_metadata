@@ -48,8 +48,8 @@ from .image_spider import ImageSpider
 
 from .image_em import ImageEM
 
-from xmipp_metadata.utils import fibonacci_sphere, compute_rotations, rotate_project_volume, FourierInterpolator, \
-    compute_projection
+from xmipp_metadata.utils import fibonacci_hemisphere, compute_rotations, FourierInterpolator, \
+    compute_projection, RealInterpolator
 
 
 class ImageHandler(object):
@@ -476,29 +476,16 @@ class ImageHandler(object):
         if volume is None:
             volume = np.squeeze(self.getData())
 
-        volume = np.flip(volume, 0)
-
-        directions = fibonacci_sphere(num_projections)
-        rots = compute_rotations(directions)
+        theta, phi = fibonacci_hemisphere(num_projections)
+        rots = np.stack([compute_rotations(t, p) for t, p in zip(theta, phi)], axis=0)
 
         if useFourier:
-            if volume.shape[0] % 2 == 0:
-                volume = shift(volume, (1.0, 0, 0))
-            else:
-                volume = shift(volume, (0, -1.0, -1.0))
-
             interpolator = FourierInterpolator(volume, pad=pad)
-
-            results = np.array(Parallel(n_jobs=n_jobs)(delayed(compute_projection)(rot, interpolator) for rot in rots),
-                               dtype=object)
         else:
-            if volume.shape[0] % 2 == 0:
-                volume = shift(volume, (1.0, 0, 0))
-            else:
-                volume = shift(volume, (0.5, 0.0, 0.0))
+            interpolator = RealInterpolator(volume)
 
-            results = np.array(Parallel(n_jobs=n_jobs)(delayed(rotate_project_volume)(volume, rot) for rot in rots),
-                               dtype=object)
+        results = np.array(Parallel(n_jobs=n_jobs)(delayed(compute_projection)(rot, interpolator) for rot in rots),
+                           dtype=object)
         projections, euler_angles = np.stack(results[:, 0], axis=0), np.stack(results[:, 1], axis=0)
 
         if degrees:

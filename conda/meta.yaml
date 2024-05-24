@@ -26,6 +26,7 @@ requirements:
     - python
     - scikit-image
     - starfile
+    - joblib
   run:
     - emfile
     - emtable
@@ -38,6 +39,7 @@ requirements:
     - python
     - scikit-image
     - starfile
+    - joblib
 
 test:
   imports:

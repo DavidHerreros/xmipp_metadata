@@ -58,9 +58,33 @@ class XmippMetaData(object):
                             'scoreByVariance', 'scoreByGiniCoeff', 'shiftX', 'shiftY', 'shiftZ',
                             'xcoor', 'ycoor']
 
-    def __init__(self, file_name, readFrom="Auto"):
+    def __init__(self, file_name, readFrom="Auto", **kwargs):
         if file_name:
-            self.read(file_name, readFrom)
+            if file_name.split(".")[-1] in ["xmd", "star"]:
+                self.read(file_name, readFrom)
+            elif file_name.split(".")[-1] in ["stk", "mrcs"]:  # Create new metadata from images
+                # Fill metadata with images
+                num_images = len(ImageHandler(file_name))
+                angles = kwargs.pop("angles", np.zeros([num_images, 3]))
+                shifts = kwargs.pop("shifts", np.zeros([num_images, 2]))
+                res = {k: v for k, v in kwargs.items() if v is not None}
+                COLUMN_DICT = {'anglePsi': angles[:, 2],
+                               'angleRot': angles[:, 0],
+                               'angleTilt': angles[:, 1],
+                               'enabled': np.ones(num_images, dtype=int),
+                               'image': [f"{id:06d}@{file_name}" for id in np.arange(1, num_images + 1, dtype=int)],
+                               'itemId': np.arange(1, num_images + 1, dtype=int),
+                               'shiftX': shifts[:, 0],
+                               'shiftY': shifts[:, 1],
+                               'shiftZ': np.zeros(num_images),
+                               'ctfVoltage': np.zeros(num_images),
+                               'ctfDefocusU': np.zeros(num_images),
+                               'ctfDefocusV': np.zeros(num_images),
+                               'ctfDefocusAngle': np.zeros(num_images),
+                               'ctfSphericalAberration': np.zeros(num_images)}
+                COLUMN_DICT.update(res)
+                self.table = pd.DataFrame.from_dict(COLUMN_DICT)
+                self.binaries = True
 
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
@@ -104,7 +128,7 @@ class XmippMetaData(object):
         try:
             self.binaries = True
             _ = self.getMetaDataImage(0)
-        except FileNotFoundError:
+        except (FileNotFoundError, KeyError):
             self.binaries = False
 
         # Fill non-existing columns
@@ -112,7 +136,7 @@ class XmippMetaData(object):
         for label in remain:
             self.table[label] = 0.0
 
-    def write(self, filename, overwrite=False, updateImagePaths=False):
+    def write(self, filename, overwrite=True, updateImagePaths=False):
         '''
         Write current metadata to file
         '''
@@ -179,6 +203,13 @@ class XmippMetaData(object):
         :param idx: (list - int) --> Rows indices to be set
         '''
         self.table.loc[idx, :] = rows
+        
+    def appendMetaDataRows(self, rows):
+        self.table.loc[len(self.table.index)] = rows
+
+    def appendMetaData(self, md):
+        md.table["itemId"] = len(self) + md.table["itemId"]
+        self.table = pd.concat([self.table, md.table], ignore_index=True)
 
     def getMetadataItems(self, rows_id, columns_id):
         '''
@@ -226,19 +257,38 @@ class XmippMetaData(object):
         if self.binaries:
             images_rows = self.getMetadataItems(row_id, 'image')
             stack_id = {}
+            stack_order = {}
+            order_id = 0
             for row in images_rows:
                 image_id, path = row.split('@') if "@" in row else (row_id, row)
                 if path not in stack_id.keys():
                     stack_id[path] = [int(image_id) - 1, ]
+                    stack_order[path] = [order_id, ]
+                    order_id += 1
                 else:
                     stack_id[path].append(int(image_id) - 1)
+                    stack_order[path].append(order_id)
+                    order_id += 1
 
             # Read binary file (if needed)
             images = []
+            order = []
             for key, values in stack_id.items():
+                order.append(np.asarray(stack_order[key]))
                 images.append(ImageHandler(key)[values])
+            order = np.hstack(order)
+            images = np.squeeze(np.vstack(images))
 
-            return np.squeeze(np.vstack(images))
+            if order.size > 1:
+                # Create an empty array of the same shape as the original array
+                reordered_images = np.empty_like(images)
+
+                # Reorder the original array based on the order vector
+                reordered_images[order] = images
+
+                return reordered_images
+            else:
+                return images
         else:
             print("Binaries not found...")
 

@@ -29,10 +29,13 @@ from pathlib import Path
 
 import numpy as np
 
+from joblib import Parallel, delayed
+from scipy.ndimage import shift
+
 from skimage.transform import rescale, resize, warp
 from skimage import filters
 from skimage.measure import label
-from skimage.morphology import opening, ball, convex_hull_image
+from skimage.morphology import opening, ball
 
 import morphsnakes as ms
 
@@ -44,6 +47,9 @@ from .image_mrc import ImageMRC
 from .image_spider import ImageSpider
 
 from .image_em import ImageEM
+
+from xmipp_metadata.utils import fibonacci_hemisphere, compute_rotations, FourierInterpolator, \
+    compute_projection, RealInterpolator
 
 
 class ImageHandler(object):
@@ -128,7 +134,7 @@ class ImageHandler(object):
 
         return self
 
-    def write(self, data, filename=None, overwrite=False, sr=1.0):
+    def write(self, data, filename=None, overwrite=True, sr=1.0):
         if not overwrite and filename is None and len(self) != data.shape[0]:
             raise Exception("Cannot save file. Number of images "
                             "in new data is different. Please, set overwrite to True "
@@ -145,7 +151,7 @@ class ImageHandler(object):
         elif filename.suffix == ".em" or filename.suffix == ".ems":
             ImageEM().write(data, filename, overwrite=overwrite, sr=sr)
 
-    def convert(self, orig_file, dest_file, overwrite=False):
+    def convert(self, orig_file, dest_file, overwrite=True):
         self.read(orig_file)
         data = self.getData()
         self.write(data, dest_file, sr=self.getSamplingRate(), overwrite=overwrite)
@@ -177,9 +183,10 @@ class ImageHandler(object):
         self.read(input_file)
         self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
 
-    def scaleSplines(self, inputFn, outputFn, scaleFactor=None, finalDimension=None,
-                     isStack=False, overwrite=False):
-        self.read(inputFn)
+    def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
+                     isStack=False, overwrite=True):
+        if isinstance(inputFn, str):
+            self.read(inputFn)
         data = np.squeeze(self.getData())
 
         if finalDimension is None:
@@ -213,10 +220,14 @@ class ImageHandler(object):
         new_sr = self.getSamplingRate() / scaleFactor
         new_sr = new_sr if new_sr > 0.0 else 1.0
 
-        self.write(data, outputFn, sr=new_sr, overwrite=overwrite)
+        if isinstance(outputFn, str):
+            self.write(data, outputFn, sr=new_sr, overwrite=overwrite)
+        else:
+            return data
 
-    def affineTransform(self, inputFn, outputFn, transformation, isStack=False, overwrite=False):
-        self.read(inputFn)
+    def affineTransform(self, transformation, inputFn=None, outputFn=None, isStack=False, overwrite=True):
+        if isinstance(inputFn, str):
+            self.read(inputFn)
         data = np.squeeze(self.getData())
 
         # Transformation dim
@@ -277,9 +288,12 @@ class ImageHandler(object):
 
         sr = self.getSamplingRate() if self.getSamplingRate() > 0.0 else 1.0
 
-        self.write(data, outputFn, sr=sr, overwrite=overwrite)
+        if isinstance(outputFn, str):
+            self.write(data, outputFn, sr=sr, overwrite=overwrite)
+        else:
+            return data
 
-    def createCircularMask(self, outputFile, boxSize=None, radius=None, center=None, is3D=True,
+    def createCircularMask(self, outputFile=None, boxSize=None, radius=None, center=None, is3D=True,
                            sr=1.0):
         if boxSize is None and radius is None:
             raise ValueError("At least boxSize or radius should be set.")
@@ -302,14 +316,21 @@ class ImageHandler(object):
 
         mask = dist_from_center <= radius
 
-        self.write(mask, outputFile, overwrite=True, sr=sr)
+        if isinstance(outputFile, str):
+            self.write(mask, outputFile, overwrite=True, sr=sr)
+        else:
+            return mask
 
-    def addNoise(self, input_file, output_file, std=1.0, avg=0.0, overwrite=False):
-        self.read(input_file)
+    def addNoise(self, input_file=None, output_file=None, std=1.0, avg=0.0, overwrite=True):
+        if isinstance(input_file, str):
+            self.read(input_file)
         data = np.squeeze(self.getData())
         noise = np.random.normal(loc=avg, scale=std, size=data.shape)
         data_noise = data + noise
-        self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
+        if isinstance(output_file, str):
+            self.write(data_noise, output_file, overwrite=overwrite, sr=self.getSamplingRate())
+        else:
+            return output_file
 
     def __fillHull(self, image):
         """
@@ -437,6 +458,40 @@ class ImageHandler(object):
             acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
 
         return acwe_ls1
+
+    def generateProjections(self, num_projections, degrees=True, volume=None, n_jobs=8, pad=0, useFourier=True):
+        """
+        Generate 2D projections of a 3D volume uniformly over the projection sphere.
+
+        Args:
+            volume (numpy.ndarray): 3D numpy array representing the volume.
+            num_projections (int): Number of projections to generate.
+
+        Returns:
+            projections (list of numpy.ndarray): List containing 2D projections.
+            euler_angles (numpy.ndarray): Array of shape (num_projections, 3) containing
+                                          Euler angles in ZYZ format for each projection.
+        """
+        # Read the data
+        if volume is None:
+            volume = np.squeeze(self.getData())
+
+        theta, phi = fibonacci_hemisphere(num_projections)
+        rots = np.stack([compute_rotations(t, p) for t, p in zip(theta, phi)], axis=0)
+
+        if useFourier:
+            interpolator = FourierInterpolator(volume, pad=pad)
+        else:
+            interpolator = RealInterpolator(volume)
+
+        results = np.array(Parallel(n_jobs=n_jobs)(delayed(compute_projection)(rot, interpolator) for rot in rots),
+                           dtype=object)
+        projections, euler_angles = np.stack(results[:, 0], axis=0), np.stack(results[:, 1], axis=0)
+
+        if degrees:
+            euler_angles = np.rad2deg(euler_angles)
+
+        return projections, euler_angles
 
 
     def close(self):

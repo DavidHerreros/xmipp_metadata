@@ -28,17 +28,25 @@
 
 import os
 import shutil
+
+import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 import time
 
 from xmipp_metadata.image_handler import ImageHandler
+from xmipp_metadata.metadata import XmippMetaData
 
 
 # Change dir to correct path
 package_path = os.path.abspath(os.path.dirname(__file__))
 data_test_path = os.path.join(package_path, "data")
 os.chdir(data_test_path)
+
+
+# Create outputs dir
+if not os.path.isdir("test_outputs"):
+    os.mkdir("test_outputs")
 
 
 # Clean output tests dir
@@ -71,7 +79,7 @@ ih.write(img, filename=os.path.join("test_outputs", "test.mrc"), sr=4.0)
 
 # Raise error due to wrong overwrite
 try:
-    ih.write(img)
+    ih.write(img, overwrite=False)
 except Exception as e:
     print("Error raised correctly!")
 
@@ -181,16 +189,16 @@ angle = 0.5 * np.pi
 transform = np.eye(3)
 transform[:-1, :-1] = np.asarray([[np.cos(angle), -np.sin(angle)],
                                   [np.sin(angle), np.cos(angle)]])
-ImageHandler().affineTransform("scaled_particles.stk",
-                               os.path.join("test_outputs", "test_stack_tr.stk",),
+ImageHandler().affineTransform(inputFn="scaled_particles.stk",
+                               outputFn=os.path.join("test_outputs", "test_stack_tr.stk",),
                                transformation=transform, isStack=True)
 
 
 # Warp stack (VOL) (Rot 90º)
 transform = np.eye(4)
 transform[:-1, :-1] = R.from_euler("zyz", [0.0, 0.0, angle]).as_matrix()
-ImageHandler().affineTransform("AK.vol",
-                               os.path.join("test_outputs", "test_tr.vol"),
+ImageHandler().affineTransform(inputFn="AK.vol",
+                               outputFn=os.path.join("test_outputs", "test_tr.vol"),
                                transformation=transform, isStack=False)
 
 
@@ -212,3 +220,34 @@ end_time = time.time()
 print(end_time - start_time)
 ih.write(mask, os.path.join("test_outputs", "test_generated_mask.vol"), sr=ih.getSamplingRate())
 ih.write(ih.getData() * mask, os.path.join("test_outputs", "test_generated_masked.vol"), sr=ih.getSamplingRate())
+
+
+# Generate projections (Fourier)
+ih = ImageHandler(os.path.join("AK.vol"))
+volume = ih.scaleSplines(finalDimension=64)
+print("Generating Fourier projections...")
+start_time = time.time()
+projections, angles = ih.generateProjections(500, degrees=True, pad=0, useFourier=True, volume=volume,
+                                             n_jobs=20)
+end_time = time.time()
+print(end_time - start_time)
+ImageHandler().write(projections, os.path.join("test_outputs", "projections_fourier.stk"))
+ImageHandler().write(volume, os.path.join("test_outputs", "volume_to_poject_fourier.mrc"))
+md = XmippMetaData(os.path.join("test_outputs", "projections_fourier.stk"), angles=angles)
+md.setMetaDataColumns(np.ones(len(md)), "subtomo_labels")
+md.write(os.path.join("test_outputs", "projections_fourier.xmd"), updateImagePaths=True)
+
+# # Generate projections (Real)
+ih = ImageHandler(os.path.join("AK.vol"))
+volume = ih.scaleSplines(finalDimension=64)
+print("Generating real projections...")
+start_time = time.time()
+projections, angles = ih.generateProjections(500, degrees=True, pad=0, useFourier=False, volume=volume,
+                                             n_jobs=20)
+end_time = time.time()
+print(end_time - start_time)
+ImageHandler().write(projections, os.path.join("test_outputs", "projections_real.stk"))
+ImageHandler().write(volume, os.path.join("test_outputs", "volume_to_poject_real.mrc"))
+md = XmippMetaData(os.path.join("test_outputs", "projections_real.stk"), angles=angles)
+md.setMetaDataColumns(np.ones(len(md)), "subtomo_labels")
+md.write(os.path.join("test_outputs", "projections_real.xmd"), updateImagePaths=True)

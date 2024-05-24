@@ -8,3 +8,4 @@ emfile
 emtable
 scikit-image<=0.19.3
 morphsnakes
+joblib

@@ -31,6 +31,7 @@ import numpy as np
 
 from joblib import Parallel, delayed
 from scipy.ndimage import shift
+from scipy.ndimage import binary_dilation, binary_fill_holes
 
 from skimage.transform import rescale, resize, warp
 from skimage import filters
@@ -368,9 +369,9 @@ class ImageHandler(object):
 
         return mask
 
-    def generateMask(self, iterations=150, smoothing=0, lambda1=1, lambda2=2, std=1, boxsize=128,
-                     smoothStairEdges=False, keep_largest=True, dust_size=None, convex=True, applyThreshold=True,
-                     threshold="otsu"):
+    def generateMask(self, inputFn=None, outputFn=None, iterations=150, smoothing=0, lambda1=1, lambda2=2, std=1,
+                     boxsize=128, smoothStairEdges=False, keep_largest=True, dust_size=None, convex=True,
+                     applyThreshold=True, threshold="otsu"):
         '''Generate automatically a binary protein mask based on a combination of snakes and
         Otsu method.
             :param int iterations: Number of iterations for computing the snake mask.
@@ -403,7 +404,10 @@ class ImageHandler(object):
                                         to the input image/volume
         '''
         # Read the data
-        data = np.squeeze(self.getData())
+        if inputFn is not None:
+            data = ImageHandler().read(inputFn).getData()
+        else:
+            data = np.squeeze(self.getData())
         data_ori = data.copy()
 
         # Filter to remove noise (optional step)
@@ -457,7 +461,21 @@ class ImageHandler(object):
             threshold_fun = getattr(filters, "threshold_" + threshold)
             acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
 
-        return acwe_ls1
+        if outputFn is not None:
+            ImageHandler().write(acwe_ls1, outputFn)
+        else:
+            return acwe_ls1
+
+    def floodFillMask(self, data, outputFn=None):
+        ball_kernel = ball(2)
+        for _ in range(10):
+            data = binary_dilation(data, ball_kernel)
+        data = binary_fill_holes(data, ball_kernel)
+
+        if outputFn is not None:
+            ImageHandler().write(data, outfile)
+        else:
+            return data
 
     def generateProjections(self, num_projections, degrees=True, volume=None, n_jobs=8, pad=0, useFourier=True):
         """

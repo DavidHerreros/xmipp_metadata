@@ -4,7 +4,7 @@
         
 <img alt="Supported Python versions" src="https://img.shields.io/badge/Supported_Python_Versions-3.8_%7C_3.9_%7C_3.10_%7C_3.11_%7C_3.12-blue">
 <img alt="GitHub Downloads (all assets, all releases)" src="https://img.shields.io/github/downloads/DavidHerreros/xmipp_metadata/total">
-<img alt="GitHub branch check runs" src="https://img.shields.io/github/check-runs/DavidHerreros/xmipp_metadata/main">
+<img alt="GitHub branch check runs" src="https://img.shields.io/github/check-runs/DavidHerreros/xmipp_metadata/master">
 <img alt="GitHub License" src="https://img.shields.io/github/license/DavidHerreros/xmipp_metadata">
 
 </p>

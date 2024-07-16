@@ -9,3 +9,4 @@ emtable
 scikit-image<=0.24.0
 morphsnakes
 joblib
+pytest

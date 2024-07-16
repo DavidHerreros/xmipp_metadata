@@ -33,57 +33,62 @@ import shutil
 from xmipp_metadata.metadata import XmippMetaData
 
 
-# Change dir to correct path
-package_path = os.path.abspath(os.path.dirname(__file__))
-data_test_path = os.path.join(package_path, "data")
-os.chdir(data_test_path)
+def test_metadata_two_sets():
+    # Change dir to correct path
+    package_path = os.path.abspath(os.path.dirname(__file__))
+    data_test_path = os.path.join(package_path, "data")
+    os.chdir(data_test_path)
 
 
-# Clean output tests dir
-for filename in os.listdir("test_outputs"):
-    file_path = os.path.join("test_outputs", filename)
-    try:
-        if os.path.isfile(file_path) or os.path.islink(file_path):
-            os.unlink(file_path)
-        elif os.path.isdir(file_path):
-            shutil.rmtree(file_path)
-    except Exception as e:
-        print('Failed to delete %s. Reason: %s' % (file_path, e))
+    # Clean output tests dir
+    for filename in os.listdir("test_outputs"):
+        file_path = os.path.join("test_outputs", filename)
+        try:
+            if os.path.isfile(file_path) or os.path.islink(file_path):
+                os.unlink(file_path)
+            elif os.path.isdir(file_path):
+                shutil.rmtree(file_path)
+        except Exception as e:
+            print('Failed to delete %s. Reason: %s' % (file_path, e))
 
 
-# Read metadata
-metadata = XmippMetaData("input_particles_two_sets.xmd")
+    # Read metadata
+    metadata = XmippMetaData("input_particles_two_sets.xmd")
 
-# Read first image
-image_1 = metadata.getMetaDataImage(0)
+    # Read first image
+    image_1 = metadata.getMetaDataImage(0)
 
-# Read second image
-image_2 = metadata.getMetaDataImage(1)
+    # Read second image
+    image_2 = metadata.getMetaDataImage(1)
 
-# Get both images
-images = metadata.getMetaDataImage([0, 1])
+    # Get both images
+    images = metadata.getMetaDataImage([0, 1])
 
-# Check images are close (Image 1)
-error_image_1 = np.sqrt(np.mean((images[0] - image_1) ** 2))
-print("Error for image 1: %.3f" % error_image_1)
+    # Check images are close (Image 1)
+    error_image_1 = np.sqrt(np.mean((images[0] - image_1) ** 2))
+    print("Error for image 1: %.3f" % error_image_1)
 
-# Check images are close (Image 2)
-error_image_2 = np.sqrt(np.mean((images[1] - image_2) ** 2))
-print("Error for image 2: %.3f" % error_image_2)
+    # Check images are close (Image 2)
+    error_image_2 = np.sqrt(np.mean((images[1] - image_2) ** 2))
+    print("Error for image 2: %.3f" % error_image_2)
 
-# Read metadata (Single set)
-metadata_single = XmippMetaData("input_particles.xmd")
+    # Read metadata (Single set)
+    metadata_single = XmippMetaData("input_particles.xmd")
 
-# Check images are close (Image 1)
-image_1 = metadata_single.getMetaDataImage(0)
-error_image_1 = np.sqrt(np.mean((images[0] - image_1) ** 2))
-print("Error for image 1 (against single set): %.3f" % error_image_1)
+    # Check images are close (Image 1)
+    image_1 = metadata_single.getMetaDataImage(0)
+    error_image_1 = np.sqrt(np.mean((images[0] - image_1) ** 2))
+    print("Error for image 1 (against single set): %.3f" % error_image_1)
 
-# Check images are close (Image 2)
-image_2 = metadata_single.getMetaDataImage(99)
-error_image_2 = np.sqrt(np.mean((images[1] - image_2) ** 2))
-print("Error for image 2 (against single set): %.3f" % error_image_2)
+    # Check images are close (Image 2)
+    image_2 = metadata_single.getMetaDataImage(99)
+    error_image_2 = np.sqrt(np.mean((images[1] - image_2) ** 2))
+    print("Error for image 2 (against single set): %.3f" % error_image_2)
 
-# Concat metadatas
-metadata_twice = XmippMetaData("input_particles.xmd")
-metadata_twice.appendMetaData(XmippMetaData("input_particles.xmd"))
+    # Concat metadatas
+    metadata_twice = XmippMetaData("input_particles.xmd")
+    metadata_twice.appendMetaData(XmippMetaData("input_particles.xmd"))
+
+
+if __name__ == '__main__':
+    test_metadata_two_sets()

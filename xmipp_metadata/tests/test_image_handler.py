@@ -29,7 +29,6 @@
 import os
 import shutil
 
-import matplotlib.pyplot as plt
 from scipy.spatial.transform import Rotation as R
 import numpy as np
 import time

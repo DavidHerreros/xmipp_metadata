@@ -29,8 +29,6 @@ from pathlib import Path
 
 import numpy as np
 
-from docutils.io import InputError
-
 from joblib import Parallel, delayed
 from scipy.ndimage import shift
 from scipy.ndimage import binary_dilation, binary_fill_holes
@@ -193,7 +191,7 @@ class ImageHandler(object):
         elif self.BINARIES is not None:
             data = np.squeeze(self.getData())
         elif not isinstance(data, np.ndarray):
-            raise InputError('Data to be scaled not found. Please, provide one of the following:'
+            raise ValueError('Data to be scaled not found. Please, provide one of the following:'
                              '    - inputFn (str): Path to the file binaries to be scaled'
                              '    - data (np.ndarray): Data to be scaled'
                              '    - Use the read method of this class with a file (example: ImageHandler().read("file")')

@@ -40,7 +40,7 @@ from skimage.morphology import opening, ball
 
 import morphsnakes as ms
 
-from scipy.ndimage.filters import gaussian_filter, median_filter
+from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import ConvexHull, Delaunay
 
 from .image_mrc import ImageMRC
@@ -185,10 +185,17 @@ class ImageHandler(object):
         self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
 
     def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
-                     isStack=False, overwrite=True):
+                     isStack=False, overwrite=True, data=None):
         if isinstance(inputFn, str):
             self.read(inputFn)
-        data = np.squeeze(self.getData())
+            data = np.squeeze(self.getData())
+        elif self.BINARIES is not None:
+            data = np.squeeze(self.getData())
+        elif not isinstance(data, np.ndarray):
+            raise ValueError('Data to be scaled not found. Please, provide one of the following:'
+                             '    - inputFn (str): Path to the file binaries to be scaled'
+                             '    - data (np.ndarray): Data to be scaled'
+                             '    - Use the read method of this class with a file (example: ImageHandler().read("file")')
 
         if finalDimension is None:
             if isStack:
@@ -473,7 +480,7 @@ class ImageHandler(object):
         data = binary_fill_holes(data, ball_kernel)
 
         if outputFn is not None:
-            ImageHandler().write(data, outfile)
+            ImageHandler().write(data, outputFn)
         else:
             return data
 

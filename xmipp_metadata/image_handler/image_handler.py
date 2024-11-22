@@ -40,7 +40,7 @@ from skimage.morphology import opening, ball
 
 import morphsnakes as ms
 
-from scipy.ndimage.filters import gaussian_filter, median_filter
+from scipy.ndimage import gaussian_filter, median_filter
 from scipy.spatial import ConvexHull, Delaunay
 
 from .image_mrc import ImageMRC
@@ -184,8 +184,8 @@ class ImageHandler(object):
         self.read(input_file)
         self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
 
-    def scaleSplines(self, inputFn=None, data=None, outputFn=None, scaleFactor=None, finalDimension=None,
-                     isStack=False, overwrite=True):
+    def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
+                     isStack=False, overwrite=True, data=None):
         if isinstance(inputFn, str):
             self.read(inputFn)
         elif self.BINARIES is not None:

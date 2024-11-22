@@ -29,6 +29,8 @@ from pathlib import Path
 
 import numpy as np
 
+from docutils.io import InputError
+
 from joblib import Parallel, delayed
 from scipy.ndimage import shift
 from scipy.ndimage import binary_dilation, binary_fill_holes
@@ -184,11 +186,17 @@ class ImageHandler(object):
         self.read(input_file)
         self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
 
-    def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
+    def scaleSplines(self, inputFn=None, data=None, outputFn=None, scaleFactor=None, finalDimension=None,
                      isStack=False, overwrite=True):
         if isinstance(inputFn, str):
             self.read(inputFn)
-        data = np.squeeze(self.getData())
+        elif self.BINARIES is not None:
+            data = np.squeeze(self.getData())
+        elif not isinstance(data, np.ndarray):
+            raise InputError('Data to be scaled not found. Please, provide one of the following:'
+                             '    - inputFn (str): Path to the file binaries to be scaled'
+                             '    - data (np.ndarray): Data to be scaled'
+                             '    - Use the read method of this class with a file (example: ImageHandler().read("file")')
 
         if finalDimension is None:
             if isStack:
@@ -473,7 +481,7 @@ class ImageHandler(object):
         data = binary_fill_holes(data, ball_kernel)
 
         if outputFn is not None:
-            ImageHandler().write(data, outfile)
+            ImageHandler().write(data, outputFn)
         else:
             return data
 

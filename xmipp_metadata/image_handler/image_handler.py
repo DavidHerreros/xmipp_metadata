@@ -188,6 +188,7 @@ class ImageHandler(object):
                      isStack=False, overwrite=True, data=None):
         if isinstance(inputFn, str):
             self.read(inputFn)
+            data = np.squeeze(self.getData())
         elif self.BINARIES is not None:
             data = np.squeeze(self.getData())
         elif not isinstance(data, np.ndarray):

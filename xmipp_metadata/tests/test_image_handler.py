@@ -163,6 +163,12 @@ def test_image_handler():
                                 os.path.join("test_outputs", "test_scaled_int.vol"),
                                 finalDimension=256, overwrite=True)
 
+    # Scale volume (reading from numpy array)
+    vol = ImageHandler(os.path.join("test_outputs", "test_scaled_int.vol")).getData()
+    ImageHandler().scaleSplines(vol,
+                                os.path.join("test_outputs", "test_scaled_int.vol"),
+                                finalDimension=256, overwrite=True)
+
 
     # Check resize error due to wrong dimensions
     # Raise error due to wrong overwrite

@@ -49,6 +49,8 @@ from .image_spider import ImageSpider
 
 from .image_em import ImageEM
 
+from .image_array import ImageArray
+
 from xmipp_metadata.utils import fibonacci_hemisphere, compute_rotations, FourierInterpolator, \
     compute_projection, RealInterpolator
 
@@ -67,21 +69,25 @@ class ImageHandler(object):
 
     def __init__(self, binary_file=None):
         if binary_file:
-            binary_file = str(binary_file)
-            if ":mrcs" in binary_file:
-                binary_file = binary_file.replace(":mrcs", "")
-            elif ":mrc" in binary_file:
-                binary_file = binary_file.replace(":mrc", "")
-
-            self.binary_file = Path(binary_file)
-
-            if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
-                self.BINARIES = ImageMRC(self.binary_file)
-            elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
-                    or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
-                self.BINARIES = ImageSpider(self.binary_file)
-            elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
-                self.BINARIES = ImageEM(self.binary_file)
+            if not isinstance(binary_file, np.ndarray):
+                binary_file = str(binary_file)
+                if ":mrcs" in binary_file:
+                    binary_file = binary_file.replace(":mrcs", "")
+                elif ":mrc" in binary_file:
+                    binary_file = binary_file.replace(":mrc", "")
+                self.binary_file = Path(binary_file)
+                if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
+                    self.BINARIES = ImageMRC(self.binary_file)
+                elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
+                        or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
+                    self.BINARIES = ImageSpider(self.binary_file)
+                elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
+                    self.BINARIES = ImageEM(self.binary_file)
+                elif self.binary_file.suffix == ".npy":
+                    self.BINARIES = ImageArray(self.binary_file)
+            else:
+                self.binary_file = binary_file
+                self.BINARIES = ImageArray(self.binary_file)
 
     def __getitem__(self, item):
         if isinstance(self.BINARIES, ImageMRC):
@@ -90,6 +96,8 @@ class ImageHandler(object):
             return self.BINARIES[item].copy()
         elif isinstance(self.BINARIES, ImageEM):
             return self.BINARIES.data[item].copy()
+        elif isinstance(self.BINARIES, ImageArray):
+            return self.BINARIES[item].copy()
         else:
             return None
 
@@ -117,21 +125,25 @@ class ImageHandler(object):
         if self.BINARIES:
             self.close()
 
-        binary_file = str(binary_file)
-        if ":mrcs" in binary_file:
-            binary_file = binary_file.replace(":mrcs", "")
-        elif ":mrc" in binary_file:
-            binary_file = binary_file.replace(":mrc", "")
-
-        self.binary_file = Path(binary_file)
-
-        if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
-            self.BINARIES = ImageMRC(self.binary_file)
-        elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
-                or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
-            self.BINARIES = ImageSpider(self.binary_file)
-        elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
-            self.BINARIES = ImageEM(self.binary_file)
+        if not isinstance(binary_file, np.ndarray):
+            binary_file = str(binary_file)
+            if ":mrcs" in binary_file:
+                binary_file = binary_file.replace(":mrcs", "")
+            elif ":mrc" in binary_file:
+                binary_file = binary_file.replace(":mrc", "")
+            self.binary_file = Path(binary_file)
+            if self.binary_file.suffix == ".mrc" or self.binary_file.suffix == ".mrcs":
+                self.BINARIES = ImageMRC(self.binary_file)
+            elif self.binary_file.suffix == ".stk" or self.binary_file.suffix == ".vol" \
+                    or self.binary_file.suffix == ".xmp" or self.binary_file.suffix == ".spi":
+                self.BINARIES = ImageSpider(self.binary_file)
+            elif self.binary_file.suffix == ".em" or self.binary_file.suffix == ".ems":
+                self.BINARIES = ImageEM(self.binary_file)
+            elif self.binary_file.suffix == ".npy":
+                self.BINARIES = ImageArray(self.binary_file)
+        else:
+            self.binary_file = binary_file
+            self.BINARIES = ImageArray(self.binary_file)
 
         return self
 
@@ -186,15 +198,14 @@ class ImageHandler(object):
 
     def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
                      isStack=False, overwrite=True, data=None):
-        if isinstance(inputFn, str):
+        if isinstance(inputFn, str) or isinstance(inputFn, np.ndarray):
             self.read(inputFn)
             data = np.squeeze(self.getData())
         elif self.BINARIES is not None:
             data = np.squeeze(self.getData())
-        elif not isinstance(data, np.ndarray):
+        else:
             raise ValueError('Data to be scaled not found. Please, provide one of the following:'
-                             '    - inputFn (str): Path to the file binaries to be scaled'
-                             '    - data (np.ndarray): Data to be scaled'
+                             '    - inputFn (str/ndarray): Path to the file binaries to be scaled or numpy array with the data to be scaled'
                              '    - Use the read method of this class with a file (example: ImageHandler().read("file")')
 
         if finalDimension is None:
@@ -225,7 +236,7 @@ class ImageHandler(object):
                 data = resize(data, finalDimension)
 
         scaleFactor = finalDimension[0] / data.shape[0] if scaleFactor is None else scaleFactor
-        new_sr = self.getSamplingRate() / scaleFactor
+        new_sr = self.getSamplingRate() / scaleFactor if self.getSamplingRate() is not None else 0.0
         new_sr = new_sr if new_sr > 0.0 else 1.0
 
         if isinstance(outputFn, str):

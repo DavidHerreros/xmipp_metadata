@@ -40,7 +40,7 @@ jobs:
         conda activate
         conda config --add channels conda-forge
         conda config --add channels dherreros
-        conda install -y anaconda-client conda-build conda-verify
+        conda install -y anaconda-client conda-build conda-verify --update-deps
         anaconda login --username ${{ secrets.ANACONDA_USERNAME }} --password ${{ secrets.ANACONDA_PASSWORD }}
         conda build conda/
         anaconda upload /usr/share/miniconda/conda-bld/linux-64/xmipp_metadata-*-py*

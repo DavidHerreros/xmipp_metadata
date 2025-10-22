@@ -36,7 +36,7 @@ import pandas as pd
 import starfile
 
 from xmipp_metadata.image_handler.image_handler import ImageHandler
-from xmipp_metadata.utils import emtable_2_pandas
+from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels
 
 
 class XmippMetaData(object):
@@ -138,6 +138,9 @@ class XmippMetaData(object):
         elif readFrom == "EMTable":
             self.table = emtable_2_pandas(file_name)
 
+        if os.path.splitext(file_name)[1] == ".star":
+            self.table = relion_df_to_xmipp_labels(self.table)
+
         try:
             self.binaries = True
             _ = self.getMetaDataImage(0)
@@ -183,7 +186,13 @@ class XmippMetaData(object):
                 image = self.getMetadataItems(idx, "image")[0]
                 image = composeImageRelPath(image, filename_path)
                 self.setMetaDataItems(image, idx, "image")
-        starfile.write(self.table, filename, overwrite=overwrite)
+
+        if os.path.splitext(filename)[1] == ".star":
+            table_to_write = xmipp_df_to_relion_labels(self.table)
+        else:
+            table_to_write = self.table
+
+        starfile.write(table_to_write, filename, overwrite=overwrite)
 
     def __del__(self):
         '''

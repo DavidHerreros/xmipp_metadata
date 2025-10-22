@@ -197,7 +197,7 @@ class ImageHandler(object):
         self.write(np.squeeze(self.getData()), sr=sr, overwrite=True)
 
     def scaleSplines(self, inputFn=None, outputFn=None, scaleFactor=None, finalDimension=None,
-                     isStack=False, overwrite=True, data=None):
+                     isStack=False, overwrite=True):
         if isinstance(inputFn, str) or isinstance(inputFn, np.ndarray):
             self.read(inputFn)
             data = np.squeeze(self.getData())
@@ -424,8 +424,12 @@ class ImageHandler(object):
         # Read the data
         if inputFn is not None:
             data = ImageHandler().read(inputFn).getData()
-        else:
+        elif self.BINARIES is not None:
             data = np.squeeze(self.getData())
+        else:
+            raise ValueError('Data to be scaled not found. Please, provide one of the following:'
+                             '    - inputFn (str/ndarray): Path to the file binaries to be masked or numpy array with the data to be masked'
+                             '    - Use the read method of this class with a file (example: ImageHandler().read("file")')
         data_ori = data.copy()
 
         # Filter to remove noise (optional step)

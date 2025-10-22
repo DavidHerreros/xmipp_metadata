@@ -35,6 +35,8 @@ jobs:
         # $CONDA is an environment variable pointing to the root of the miniconda directory
         echo $CONDA/bin >> $GITHUB_PATH
     - name: Publish to Conda
+      env:
+        ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
       run: |
         eval "$(conda shell.bash hook)"
         conda activate
@@ -42,7 +44,7 @@ jobs:
         conda config --add channels dherreros
         conda install -y anaconda-client conda-build conda-verify --update-deps
         conda build conda/
-        anaconda -t "$ANACONDA_TOKEN" upload /usr/share/miniconda/conda-bld/linux-64/xmipp_metadata-*-py*
+        anaconda -t "$ANACONDA_API_TOKEN" upload /usr/share/miniconda/conda-bld/linux-64/xmipp_metadata-*-py*
     - name: Build and publish Pypi
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}

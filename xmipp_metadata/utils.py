@@ -29,6 +29,7 @@ import numpy as np
 import math
 from emtable import Table
 import pandas as pd
+from typing import Dict, Union, Optional, Literal
 from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.transform import Rotation as R
 from scipy.ndimage import affine_transform
@@ -53,6 +54,128 @@ _AXES2TUPLE = {
 
 _TUPLE2AXES = dict((v, k) for k, v in _AXES2TUPLE.items())
 
+# RELION → Xmipp mapping (no leading underscore)
+RELION_TO_XMIPP_NOUSCORE = {
+    # bookkeeping / ids
+    "rlnImageId": "itemId",
+    "rlnImageName": "image",
+    "rlnMicrographName": "micrograph",
+    "rlnMicrographId": "micrographId",
+    "rlnParticleName": "particleId",
+    "rlnGroupName": "groupName",
+    "rlnOpticsGroup": "groupId",
+    "rlnRandomSubset": "randomSubset",
+    "rlnClassNumber": "classNumber",
+
+    # coordinates (particle center on the micrograph)
+    "rlnCoordinateX": "xcoor",
+    "rlnCoordinateY": "ycoor",
+    "rlnCoordinateZ": "zcoor",
+
+    # orientations
+    "rlnAngleRot": "angleRot",
+    "rlnAngleTilt": "angleTilt",
+    "rlnAnglePsi": "anglePsi",
+
+    # shifts (in pixels or Å depending on RELION version)
+    "rlnOriginX": "shiftX",
+    "rlnOriginY": "shiftY",
+    "rlnOriginZ": "shiftZ",
+    "rlnOriginXAngst": "shiftX",
+    "rlnOriginYAngst": "shiftY",
+
+    # CTF parameters
+    "rlnVoltage": "ctfVoltage",
+    "rlnSphericalAberration": "ctfSphericalAberration",
+    "rlnAmplitudeContrast": "ctfQ0",
+    "rlnCtfImage": "ctfImage",
+    "rlnCtfBfactor": "ctfBfactor",
+    "rlnCtfScalefactor": "ctfScaleFactor",
+    "rlnCtfMaxResolution": "ctfMaxResolution",
+    "rlnCtfFigureOfMerit": "ctfFom",
+    "rlnCtfValue": "ctfValue",
+    "rlnDetectorPixelSize": "ctfDetectorPixelSize",
+    "rlnMagnification": "ctfMagnification",
+    "rlnDefocusU": "ctfDefocusU",
+    "rlnDefocusV": "ctfDefocusV",
+    "rlnDefocusAngle": "ctfDefocusAngle",
+    "rlnCtfDefocusU": "ctfDefocusU",
+    "rlnCtfDefocusV": "ctfDefocusV",
+    "rlnCtfDefocusAngle": "ctfDefocusAngle",
+
+    # other / quality
+    "rlnAutopickFigureOfMerit": "autopickFom",
+    "rlnMaxValueProbDistribution": "scoreByVariance",
+    "rlnNormCorrection": "normCorrection",
+    "rlnLogLikeliContribution": "logLikeContribution",
+    "rlnAccuracyRotations": "angleAccuracy",
+    "rlnAccuracyTranslations": "shiftAccuracy",
+    "rlnNrOfSignificantSamples": "nSamples",
+    "rlnReferenceImage": "referenceImage",
+}
+
+# Xmipp (no leading underscore) --> RELION labels
+# (Complements the earlier RELION->Xmipp mapping you used)
+XMIPP_TO_RELION_PARTICLES = {
+    # identity / names
+    "image": "rlnImageName",
+    "micrograph": "rlnMicrographName",
+    "micrographId": "rlnMicrographId",
+    "itemId": "rlnImageId",
+    "particleId": "rlnParticleName",
+    "groupName": "rlnGroupName",
+    "groupId": "rlnOpticsGroup",     # lives in particles; also used to build optics
+    "randomSubset": "rlnRandomSubset",
+    "classNumber": "rlnClassNumber",
+
+    # coordinates & geometry
+    "xcoor": "rlnCoordinateX",
+    "ycoor": "rlnCoordinateY",
+    "zcoor": "rlnCoordinateZ",
+    "angleRot": "rlnAngleRot",
+    "angleTilt": "rlnAngleTilt",
+    "anglePsi": "rlnAnglePsi",
+
+    # shifts (note: unit choice handled below)
+    # "shiftX" -> rlnOriginX or rlnOriginXAngst
+    # "shiftY" -> rlnOriginY or rlnOriginYAngst
+    # "shiftZ" -> rlnOriginZ  (Å variant is uncommon in RELION)
+
+    # per-particle CTF / quality
+    "ctfImage": "rlnCtfImage",
+    "ctfBfactor": "rlnCtfBfactor",
+    "ctfScaleFactor": "rlnCtfScalefactor",
+    "ctfMaxResolution": "rlnCtfMaxResolution",
+    "ctfFom": "rlnCtfFigureOfMerit",
+    "ctfValue": "rlnCtfValue",
+    "ctfDefocusU": "rlnCtfDefocusU",
+    "ctfDefocusV": "rlnCtfDefocusV",
+    "ctfDefocusAngle": "rlnCtfDefocusAngle",
+
+    # misc stats
+    "autopickFom": "rlnAutopickFigureOfMerit",
+    "scoreByVariance": "rlnMaxValueProbDistribution",
+    "normCorrection": "rlnNormCorrection",
+    "logLikeContribution": "rlnLogLikeliContribution",
+    "angleAccuracy": "rlnAccuracyRotations",
+    "shiftAccuracy": "rlnAccuracyTranslations",
+    "nSamples": "rlnNrOfSignificantSamples",
+    "referenceImage": "rlnReferenceImage",
+}
+
+# Optics fields to extract from the Xmipp table (group-level)
+XMIPP_TO_RELION_OPTICS = {
+    "groupId": "rlnOpticsGroup",
+    "groupName": "rlnGroupName",  # optional, RELION supports rlnOpticsGroupName (varies by version)
+    "ctfVoltage": "rlnVoltage",
+    "ctfSphericalAberration": "rlnSphericalAberration",
+    "ctfQ0": "rlnAmplitudeContrast",
+    "ctfDetectorPixelSize": "rlnDetectorPixelSize",
+    "ctfMagnification": "rlnMagnification",
+    # Add more group-level fields if you keep them at optics scope in your workflow,
+    # e.g. "samplingRate": "rlnImagePixelSize" (if you maintain such a column).
+}
+
 
 def emtable_2_pandas(file_name):
     """Convert an EMTable object to a Pandas dataframe to be used by XmippMetaData class"""
@@ -72,6 +195,232 @@ def emtable_2_pandas(file_name):
         pd_table.append(pd.DataFrame([row]))
 
     return pd.concat(pd_table, ignore_index=True)
+
+
+def _choose_particles_table(star_obj: Dict[str, pd.DataFrame]) -> str:
+    """
+    Heuristic to pick the particles-like table from a starfile.read() dict.
+    Prefers any key named 'particles' (case-insensitive), otherwise the table
+    containing rlnImageName or rlnMicrographName.
+    """
+    # 1) direct name hint
+    for k in star_obj.keys():
+        if k.lower() in {"particles", "data_particles", "particles_table"}:
+            return k
+    # 2) columns heuristic
+    best_key = None
+    best_score = -1
+    wanted = {"rlnImageName", "rlnMicrographName", "rlnCoordinateX", "rlnCoordinateY"}
+    for k, df in star_obj.items():
+        score = len(wanted.intersection(set(df.columns)))
+        if score > best_score:
+            best_key = k
+            best_score = score
+    return best_key or list(star_obj.keys())[0]
+
+
+def _merge_optics_into_particles(
+    particles: pd.DataFrame,
+    optics: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Merge optics loop into particles on rlnOpticsGroup if present in both.
+    Keeps particle columns when duplicates exist.
+    """
+    if "rlnOpticsGroup" in particles.columns and "rlnOpticsGroup" in optics.columns:
+        # Avoid duplicate columns from optics that already exist in particles
+        optics_cols = [c for c in optics.columns if c not in particles.columns or c == "rlnOpticsGroup"]
+        merged = particles.merge(
+            optics[optics_cols],
+            on="rlnOpticsGroup",
+            how="left",
+            suffixes=("", "_opt")
+        )
+        return merged
+    return particles
+
+
+def relion_df_to_xmipp_labels(
+    star_obj: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
+    *,
+    table: Optional[str] = None,
+    merge_optics: bool = True,
+    relion_to_xmipp: Dict[str, str] = RELION_TO_XMIPP_NOUSCORE,
+    prefer_ctf_defocus_uv: bool = True,
+) -> pd.DataFrame:
+    """
+    Convert a RELION table (or starfile.read() dict) to Xmipp-style labels (no leading underscores).
+
+    Parameters
+    ----------
+    star_obj : DataFrame or dict[str, DataFrame]
+        Either a single RELION table (DataFrame) or the dict returned by starfile.read().
+    table : str or None
+        If star_obj is a dict, choose which key to use. If None, auto-detect a particles table.
+    merge_optics : bool
+        If star_obj is a dict and contains 'optics' + particles, merge optics fields into particles.
+    relion_to_xmipp : dict
+        Mapping from RELION to Xmipp-style column names.
+    prefer_ctf_defocus_uv : bool
+        When both rlnDefocus* and rlnCtfDefocus* exist, drop the older rlnDefocus* set.
+
+    Returns
+    -------
+    pd.DataFrame
+        DataFrame with Xmipp-style column names (no leading underscore).
+    """
+    # Pick the working DataFrame
+    if isinstance(star_obj, dict):
+        if table is None:
+            table = _choose_particles_table(star_obj)
+        df = star_obj[table].copy()
+
+        # Optionally merge optics into particles
+        if merge_optics:
+            # try common optics key names
+            optics_key = None
+            for k in star_obj.keys():
+                if k.lower() in {"optics", "data_optics", "optics_table"}:
+                    optics_key = k
+                    break
+            if optics_key is not None and optics_key != table:
+                df = _merge_optics_into_particles(df, star_obj[optics_key])
+    else:
+        df = star_obj.copy()
+
+    # Prefer rlnCtfDefocus* over rlnDefocus* if both present
+    if prefer_ctf_defocus_uv:
+        pairs = [
+            ("rlnDefocusU", "rlnCtfDefocusU"),
+            ("rlnDefocusV", "rlnCtfDefocusV"),
+            ("rlnDefocusAngle", "rlnCtfDefocusAngle"),
+        ]
+        for old, new in pairs:
+            if old in df.columns and new in df.columns:
+                df = df.drop(columns=[old])
+
+    # Apply renaming
+    rename_map = {c: relion_to_xmipp[c] for c in df.columns if c in relion_to_xmipp}
+    df = df.rename(columns=rename_map)
+
+    return df
+
+
+def xmipp_df_to_relion_labels(
+    xmipp_df: pd.DataFrame,
+    *,
+    shift_units: Literal["pixels", "angstroms"] = "pixels",
+    default_group: int = 1,
+    optics_aggregate: Literal["first", "mean", "median"] = "first",
+    drop_optics_from_particles: bool = True,
+) -> Dict[str, pd.DataFrame]:
+    """
+    Convert a single Xmipp-style table (no leading underscores in column names)
+    into RELION 'optics' and 'particles' tables with rln* labels.
+
+    Parameters
+    ----------
+    xmipp_df : pd.DataFrame
+        Input table with columns like: image, micrograph, xcoor, ycoor, anglePsi,
+        shiftX, ctfVoltage, ctfDefocusU, ..., groupId, etc.
+    shift_units : {'pixels','angstroms'}
+        Choose how to map shiftX/shiftY:
+          - 'pixels'   -> rlnOriginX,  rlnOriginY
+          - 'angstroms'-> rlnOriginXAngst, rlnOriginYAngst
+        (shiftZ always mapped to rlnOriginZ if present)
+    default_group : int
+        Used if no 'groupId' is present; all rows are assigned to this group.
+    optics_aggregate : {'first','mean','median'}
+        How to collapse multiple rows per group into a single optics row
+        when optics columns vary within a group.
+    drop_optics_from_particles : bool
+        After building the optics table, remove optics columns from particles.
+
+    Returns
+    -------
+    dict with keys 'optics' and 'particles'
+    """
+    df = xmipp_df.copy()
+
+    # Ensure we have a group id
+    if "groupId" not in df.columns:
+        df["groupId"] = default_group
+
+    # 1) Build the particles table
+    parts = df.copy()
+
+    # Map simple columns
+    rename_map_particles = {c: XMIPP_TO_RELION_PARTICLES[c]
+                            for c in parts.columns if c in XMIPP_TO_RELION_PARTICLES}
+
+    # Handle shifts by unit
+    if "shiftX" in parts.columns:
+        rename_map_particles["shiftX"] = "rlnOriginX" if shift_units == "pixels" else "rlnOriginXAngst"
+    if "shiftY" in parts.columns:
+        rename_map_particles["shiftY"] = "rlnOriginY" if shift_units == "pixels" else "rlnOriginYAngst"
+    if "shiftZ" in parts.columns:
+        # RELION rarely uses an Å label for Z; map to pixels-style name for compatibility
+        rename_map_particles["shiftZ"] = "rlnOriginZ"
+
+    particles = parts.rename(columns=rename_map_particles)
+
+    # 2) Build the optics table (group-level collapse)
+    optics_cols_present = [c for c in XMIPP_TO_RELION_OPTICS if c in df.columns]
+    if not optics_cols_present:
+        # Still need at least the group column
+        optics_df = pd.DataFrame({"rlnOpticsGroup": sorted(df["groupId"].unique())})
+    else:
+        optics_src = df[["groupId"] + [c for c in optics_cols_present if c != "groupId"]].copy()
+
+        # Aggregate to one row per group
+        agg_methods = {
+            "first": lambda s: s.dropna().iloc[0] if s.dropna().size else pd.NA,
+            "mean": "mean",
+            "median": "median",
+        }
+        agg = agg_methods[optics_aggregate]
+
+        grouped = optics_src.groupby("groupId", dropna=False).agg(agg).reset_index()
+
+        # Rename to RELION labels
+        rename_map_optics = {c: XMIPP_TO_RELION_OPTICS[c] for c in grouped.columns if c in XMIPP_TO_RELION_OPTICS}
+        optics_df = grouped.rename(columns=rename_map_optics)
+
+        # Make sure we have rlnOpticsGroup specifically
+        if "rlnOpticsGroup" not in optics_df.columns:
+            optics_df = optics_df.rename(columns={"groupId": "rlnOpticsGroup"})
+        # RELION often expects integer group ids
+        optics_df["rlnOpticsGroup"] = optics_df["rlnOpticsGroup"].astype("int64", errors="ignore")
+
+    # 3) Clean the particles table: ensure rlnOpticsGroup exists & type
+    if "rlnOpticsGroup" not in particles.columns and "groupId" in parts.columns:
+        particles = particles.rename(columns={"groupId": "rlnOpticsGroup"})
+    if "rlnOpticsGroup" in particles.columns:
+        try:
+            particles["rlnOpticsGroup"] = particles["rlnOpticsGroup"].astype("int64")
+        except Exception:
+            pass  # leave as-is if conversion fails
+
+    # 4) Optionally drop optics-level columns from particles
+    if drop_optics_from_particles:
+        to_drop_particle_side = [XMIPP_TO_RELION_OPTICS[c]
+                                 for c in optics_cols_present
+                                 if c in XMIPP_TO_RELION_OPTICS and XMIPP_TO_RELION_OPTICS[c] in particles.columns]
+        # Also drop the Xmipp originals if still around
+        to_drop_particle_side += [c for c in optics_cols_present if c in particles.columns]
+        to_drop_particle_side = sorted(set(to_drop_particle_side) - {"rlnOpticsGroup", "rlnGroupName"})
+        particles = particles.drop(columns=[c for c in to_drop_particle_side if c in particles.columns])
+
+    # 5) Sort columns a bit (optional nicety)
+    # Put keys early for readability
+    part_key_order = [c for c in ["rlnImageName","rlnImageId","rlnMicrographName","rlnOpticsGroup"]
+                      if c in particles.columns]
+    particles = particles[[*part_key_order, *[c for c in particles.columns if c not in part_key_order]]]
+
+    opt_key_order = [c for c in ["rlnOpticsGroup","rlnGroupName"] if c in optics_df.columns]
+    optics_df = optics_df[[*opt_key_order, *[c for c in optics_df.columns if c not in opt_key_order]]]
+
+    return {"optics": optics_df, "particles": particles}
 
 
 def fibonacci_sphere(samples):

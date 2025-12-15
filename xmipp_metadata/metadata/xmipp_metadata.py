@@ -297,7 +297,11 @@ class XmippMetaData(object):
             order = []
             for key, values in stack_id.items():
                 order.append(np.asarray(stack_order[key]))
-                images.append(ImageHandler(key)[values])
+                ih = ImageHandler(key)
+                if len(ih) == len(values) == 1:
+                    images.append(ih.getData())
+                else:
+                    images.append(ih[values])
             order = np.hstack(order)
             images = np.squeeze(np.vstack(images))
 

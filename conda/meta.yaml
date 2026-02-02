@@ -19,27 +19,35 @@ requirements:
     - morphsnakes
     - mrcfile
     - numpy <=1.23.0
-    - pandas
+    - pandas<=2.1.4
     - pillow ==8.4.0   # [ py == 36 ]
     - pillow ==9.2.0   # [ py >= 37 ]
     - pip
     - python
-    - scikit-image
-    - starfile
+    - scikit-image<=0.24.0
+    - starfile!=0.5.0
     - joblib
+    - pytest
+    - trimesh
+    - matplotlib==3.7.3  # [ py == 38 ]
+    - matplotlib==3.8.1  # [ py >= 39 ]
   run:
     - emfile
     - emtable
     - morphsnakes
     - mrcfile
     - numpy <=1.23.0
-    - pandas
+    - pandas<=2.1.4
     - pillow ==8.4.0   # [ py == 36 ]
     - pillow ==9.2.0   # [ py >= 37 ]
     - python
-    - scikit-image
-    - starfile
+    - scikit-image<=0.24.0
+    - starfile!=0.5.0
     - joblib
+    - pytest
+    - trimesh
+    - matplotlib==3.7.3  # [ py == 38 ]
+    - matplotlib==3.8.1  # [ py >= 39 ]
 
 test:
   imports:

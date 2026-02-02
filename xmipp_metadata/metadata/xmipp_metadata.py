@@ -36,7 +36,7 @@ import pandas as pd
 import starfile
 
 from xmipp_metadata.image_handler.image_handler import ImageHandler
-from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels
+from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels, read_cs_to_relion_df, write_dict_to_cs
 
 
 class XmippMetaData(object):
@@ -61,7 +61,7 @@ class XmippMetaData(object):
     def __init__(self, file_name=None, rows=None, readFrom="Auto", **kwargs):
         if file_name:
             if isinstance(file_name, str):
-                if file_name.split(".")[-1] in ["xmd", "star"]:
+                if file_name.split(".")[-1] in ["xmd", "star", "cs"]:
                     self.read(file_name, readFrom)
                 elif file_name.split(".")[-1] in ["stk", "mrcs"]:  # Create new metadata from images
                     # Fill metadata with images
@@ -130,15 +130,20 @@ class XmippMetaData(object):
         '''
         if readFrom == "Auto":
             try:
-                self.table = starfile.read(file_name)
+                if os.path.splitext(file_name)[1] == ".cs":
+                    self.table = read_cs_to_relion_df(file_name)
+                else:
+                    self.table = starfile.read(file_name)
             except ValueError:
                 self.table = emtable_2_pandas(file_name)
         elif readFrom == "Pandas":
             self.table = starfile.read(file_name)
         elif readFrom == "EMTable":
             self.table = emtable_2_pandas(file_name)
+        elif readFrom == "CryoSparc":
+            self.table = read_cs_to_relion_df(file_name)
 
-        if os.path.splitext(file_name)[1] == ".star":
+        if os.path.splitext(file_name)[1] in [".star", ".cs"]:
             self.table = relion_df_to_xmipp_labels(self.table)
 
         try:
@@ -189,6 +194,10 @@ class XmippMetaData(object):
 
         if os.path.splitext(filename)[1] == ".star":
             table_to_write = xmipp_df_to_relion_labels(self.table)
+        elif os.path.splitext(filename)[1] == ".cs":
+            table_to_write = xmipp_df_to_relion_labels(self.table)
+            write_dict_to_cs(table_to_write, filename)
+            return
         else:
             table_to_write = self.table
 
@@ -299,7 +308,7 @@ class XmippMetaData(object):
                 order.append(np.asarray(stack_order[key]))
                 ih = ImageHandler(key)
                 if len(ih) == len(values) == 1:
-                    images.append(ih.getData())
+                    images.append(ih.getData()[None, ...])
                 else:
                     images.append(ih[values])
             order = np.hstack(order)

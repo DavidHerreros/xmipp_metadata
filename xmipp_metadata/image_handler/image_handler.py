@@ -29,14 +29,18 @@ from pathlib import Path
 
 import numpy as np
 
+import matplotlib.pyplot as plt
+
 from joblib import Parallel, delayed
-from scipy.ndimage import shift
-from scipy.ndimage import binary_dilation, binary_fill_holes
+from scipy.ndimage import binary_dilation, binary_fill_holes, map_coordinates
 
 from skimage.transform import rescale, resize, warp
 from skimage import filters
 from skimage.measure import label
 from skimage.morphology import opening, ball
+from skimage import measure
+
+import trimesh
 
 import morphsnakes as ms
 
@@ -481,12 +485,19 @@ class ImageHandler(object):
         if applyThreshold:
             data_ori = data_ori * acwe_ls1
             threshold_fun = getattr(filters, "threshold_" + threshold)
-            acwe_ls1 = (data_ori >= threshold_fun(data_ori)).astype(np.float32)
+            acwe_ls1 = (data_ori >= threshold_fun(data_ori))
+
+            # Keep the largest component only
+            if keep_largest:
+                labels = label(acwe_ls1)
+                assert (labels.max() != 0)  # assume at least 1 CC
+                acwe_ls1 = labels == np.argmax(np.bincount(labels.flat)[1:]) + 1
+
 
         if outputFn is not None:
-            ImageHandler().write(acwe_ls1, outputFn)
+            ImageHandler().write(acwe_ls1.astype(np.float32), outputFn)
         else:
-            return acwe_ls1
+            return acwe_ls1.astype(np.float32)
 
     def floodFillMask(self, data, outputFn=None):
         ball_kernel = ball(2)
@@ -533,6 +544,75 @@ class ImageHandler(object):
 
         return projections, euler_angles
 
+    def exportVolumetoPPT(self, outputFn, inputFn=None, colorsFn=None):
+        # Read the volume
+        if inputFn is not None:
+            vol = ImageHandler().read(inputFn).getData()
+        elif self.BINARIES is not None:
+            vol = np.squeeze(self.getData())
+        else:
+            raise ValueError('Data to be scaled not found. Please, provide one of the following:'
+                             '    - inputFn (str/ndarray): Path to the file binaries to be masked or numpy array with the data to be masked'
+                             '    - Use the read method of this class with a file (example: ImageHandler().read("file")')
+
+        # Read the volume
+        if colorsFn is not None:
+            colors = ImageHandler().read(colorsFn).getData()
+        else:
+            colors = vol
+
+        # Automatic volume masking
+        mask = ImageHandler().generateMask(inputFn=vol, boxsize=64)
+
+        # Apply mask
+        vol = vol * mask
+
+        # Volume triangulation
+        verts, faces, normals, values = measure.marching_cubes(vol, level=vol[vol > 0.0].min() * 1.5,
+                                                               gradient_direction="ascent")
+
+        # Interpolate values
+        coords = np.vstack((verts[:, 0], verts[:, 1], verts[:, 2]))
+        vertex_values = map_coordinates(colors, coords, order=1)
+
+        # Normalize vertices (to avoid large volumes in PPT)
+        verts = verts - verts.mean(axis=0)
+        verts = verts / np.max(np.linalg.norm(verts, axis=1))
+
+        # Build mesh
+        mesh = trimesh.Trimesh(vertices=verts, faces=faces, vertex_normals=normals)
+
+        # Color processing
+        v = vertex_values
+        # v_norm = (v - v.min()) / (v.max() - v.min())
+        p2, p98 = np.percentile(v, [2, 98])
+        v_clipped = np.clip(v, p2, p98)
+        v_norm = (v_clipped - p2) / (p98 - p2)
+        cmap = plt.get_cmap('viridis')
+
+        # Get base colors (0.0 to 1.0 floats)
+        colors_rgba = cmap(v_norm)
+
+        # Gamma correction of colors
+        gamma = 3.5
+        colors_rgba[:, :3] = np.power(colors_rgba[:, :3], gamma)
+
+        # Convert to 0-255 uint8
+        rgba = (colors_rgba * 255).astype(np.uint8)
+        mesh.visual.vertex_colors = rgba
+
+        # Material settings
+        material = trimesh.visual.material.PBRMaterial(
+            roughnessFactor=1.0,
+            metallicFactor=0.0,
+            baseColorFactor=[255, 255, 255, 255]
+        )
+        mesh.visual.material = material
+
+        # Export mesh to GLB format (valid for PPT)
+        outputFn = Path(outputFn)
+        outputFn = str(outputFn.rename(outputFn.with_suffix('.glb')))
+        mesh.export(outputFn)
 
     def close(self):
         '''

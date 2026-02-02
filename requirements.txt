@@ -10,3 +10,6 @@ scikit-image<=0.24.0
 morphsnakes
 joblib
 pytest
+trimesh
+matplotlib==3.7.3; python_version == '3.8'
+matplotlib==3.8.1; python_version >= '3.9'

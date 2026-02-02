@@ -58,8 +58,11 @@ class ImageMRC(object):
         '''
         Generator method to loop through all the images in the stack
         '''
-        for image in self.data:
-            yield image
+        if self.mrc_handle.is_single_image():
+            yield self.mrc_handle.data
+        else:
+            for image in self.mrc_handle.data:
+                yield image
 
     def __getitem__(self, item):
         return self.mrc_handle.data[item]

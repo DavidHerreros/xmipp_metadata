@@ -25,6 +25,7 @@
 # **************************************************************************
 
 
+import shutil
 import numpy as np
 import math
 from emtable import Table
@@ -32,7 +33,6 @@ import pandas as pd
 from typing import Dict, Union, Optional, Literal
 from scipy.interpolate import RegularGridInterpolator
 from scipy.spatial.transform import Rotation as R
-from scipy.ndimage import affine_transform
 
 
 # epsilon for testing whether a number is close to zero
@@ -421,6 +421,338 @@ def xmipp_df_to_relion_labels(
     optics_df = optics_df[[*opt_key_order, *[c for c in optics_df.columns if c not in opt_key_order]]]
 
     return {"optics": optics_df, "particles": particles}
+
+
+def read_cs_to_relion_df(cs_file_path):
+    """
+    Reads a CryoSPARC .cs file into a Pandas DataFrame.
+    Excludes internal CryoSPARC bookkeeping fields (uid, import_sig).
+    """
+    data = np.load(cs_file_path)
+    names = data.dtype.names
+    df_data = {}
+    # 1. Track columns we have handled or want to ignore
+    converted_cols = []
+    # FIELDS TO REMOVE: Add any other non-useful CS internal fields here
+    ignored_fields = ['uid', 'blob/import_sig']
+    # --- Helper: Rotation Conversion ---
+    def convert_pose(pose_data):
+        rotations = R.from_rotvec(pose_data)
+        return rotations.as_euler('ZYZ', degrees=True)
+    # --- 2. Standard Conversions ---
+    # Pre-fetch pixel size
+    psize = 1.0
+    if 'blob/psize_A' in names:
+        psize = data['blob/psize_A']
+    # OPTICS / CTF
+    if 'ctf/defocus_u' in names:
+        df_data['rlnDefocusU'] = data['ctf/defocus_u']
+        converted_cols.append('ctf/defocus_u')
+    if 'ctf/defocus_v' in names:
+        df_data['rlnDefocusV'] = data['ctf/defocus_v']
+        converted_cols.append('ctf/defocus_v')
+    if 'ctf/defocus_angle' in names:
+        df_data['rlnDefocusAngle'] = np.degrees(data['ctf/defocus_angle'])
+        converted_cols.append('ctf/defocus_angle')
+    if 'ctf/accel_kv' in names:
+        df_data['rlnVoltage'] = data['ctf/accel_kv']
+        converted_cols.append('ctf/accel_kv')
+    if 'ctf/cs_mm' in names:
+        df_data['rlnSphericalAberration'] = data['ctf/cs_mm']
+        converted_cols.append('ctf/cs_mm')
+    if 'ctf/amp_contrast' in names:
+        df_data['rlnAmplitudeContrast'] = data['ctf/amp_contrast']
+        converted_cols.append('ctf/amp_contrast')
+    if 'ctf/phase_shift_rad' in names:
+        df_data['rlnPhaseShift'] = np.degrees(data['ctf/phase_shift_rad'])
+        converted_cols.append('ctf/phase_shift_rad')
+    # BLOB / IMAGES
+    if 'blob/micrograph_blob/path' in names:
+        vals = data['blob/micrograph_blob/path']
+        if vals.dtype.kind == 'S': vals = np.char.decode(vals, 'utf-8')
+        df_data['rlnMicrographName'] = vals
+        converted_cols.append('blob/micrograph_blob/path')
+    if 'blob/path' in names:
+        vals = data['blob/path']
+        if vals.dtype.kind == 'S': vals = np.char.decode(vals, 'utf-8')
+        df_data['rlnImageName'] = vals
+        converted_cols.append('blob/path')
+    if 'blob/idx' in names and 'rlnImageName' in df_data:
+        indices = data['blob/idx'] + 1
+        df_data['rlnImageName'] = [f"{i}@{p}" for i, p in zip(indices, df_data['rlnImageName'])]
+        converted_cols.append('blob/idx')
+    if 'blob/psize_A' in names:
+        df_data['rlnPixelSize'] = data['blob/psize_A']
+        df_data['rlnDetectorPixelSize'] = data['blob/psize_A']
+        converted_cols.append('blob/psize_A')
+    # ALIGNMENTS
+    if 'alignments3D/pose' in names:
+        eulers = convert_pose(data['alignments3D/pose'])
+        df_data['rlnAngleRot'] = eulers[:, 0]
+        df_data['rlnAngleTilt'] = eulers[:, 1]
+        df_data['rlnAnglePsi'] = eulers[:, 2]
+        converted_cols.append('alignments3D/pose')
+    if 'alignments3D/shift' in names:
+        shifts = data['alignments3D/shift']
+        df_data['rlnOriginXAngst'] = shifts[:, 0] * psize
+        df_data['rlnOriginYAngst'] = shifts[:, 1] * psize
+        converted_cols.append('alignments3D/shift')
+    # --- 3. Robust Catch-All with Exclusion ---
+    for name in names:
+        # Check if column is already converted OR if it is in our ignore list
+        if name not in converted_cols and name not in ignored_fields:
+            col_data = data[name]
+            # Handle Byte Strings
+            if col_data.dtype.kind == 'S':
+                col_data = np.char.decode(col_data, 'utf-8')
+            # Handle Multi-dimensional Arrays (convert to list of arrays)
+            if col_data.ndim > 1:
+                df_data[name] = list(col_data)
+            else:
+                df_data[name] = col_data
+    return pd.DataFrame(df_data)
+
+
+def write_dict_to_cs(input_data, output_filename):
+    """
+    Converts a Dictionary back into a CryoSPARC .cs file.
+
+    Supports two input formats:
+    1. Standard Dict: {'_rlnImageName': [...], '_rlnAngleRot': [...]}
+    2. Relion/Xmipp Dict: {'optics': pd.DataFrame, 'particles': pd.DataFrame}
+       (Automatically merges optics info into particles)
+    """
+
+    # --- 1. INPUT NORMALIZATION ---
+    # Convert 'optics'/'particles' structure into a single flat dictionary
+    data = {}
+
+    # Check if input is the split format (from xmipp_df_to_relion_labels)
+    if isinstance(input_data, dict) and 'particles' in input_data and isinstance(input_data['particles'], pd.DataFrame):
+        particles_df = input_data['particles']
+        optics_df = input_data.get('optics', None)
+
+        # Merge Optics into Particles if optics exists
+        if optics_df is not None and 'rlnOpticsGroup' in particles_df.columns and 'rlnOpticsGroup' in optics_df.columns:
+            # Left join particles with optics on Group ID
+            merged_df = particles_df.merge(optics_df, on='rlnOpticsGroup', how='left', suffixes=('', '_optics_dup'))
+
+            # Drop duplicate columns resulting from the join (if any)
+            cols_to_drop = [c for c in merged_df.columns if c.endswith('_optics_dup')]
+            merged_df.drop(columns=cols_to_drop, inplace=True)
+
+            # Convert to dict for the rest of the pipeline
+            # We use 'list' to ensure we get python objects, which our validation logic handles well
+            temp_data = merged_df.to_dict(orient='list')
+        else:
+            # No optics or no linking column, just use particles
+            temp_data = particles_df.to_dict(orient='list')
+
+        # Normalize keys (ensure _rln prefix) immediately
+        for k, v in temp_data.items():
+            key_name = k if k.startswith('_') else f"_{k}" if k.startswith('rln') else k
+            data[key_name] = v
+
+    else:
+        # Standard dictionary input (Legacy support)
+        if not input_data:
+            raise ValueError("Input dictionary is empty.")
+        for k, v in input_data.items():
+            key_name = k if k.startswith('_') else f"_{k}" if k.startswith('rln') else k
+            data[key_name] = v
+
+    # --- 1b. Determine N (Number of Particles) ---
+    priority_keys = ['_rlnImageName', 'blob/path', 'blob/idx', 'uid', 'blob/psize_A']
+    ref_key = None
+    for pk in priority_keys:
+        if pk in data:
+            ref_key = pk
+            break
+    if ref_key is None:
+        ref_key = next(iter(data))
+
+    ref_data = np.array(data[ref_key], ndmin=1)
+    num_particles = len(ref_data)
+
+    print(f"Detected {num_particles} particles (Reference key: {ref_key})")
+
+    dtype_list = []
+    output_arrays = {}
+    consumed_keys = set()
+
+    # --- Helper: Get array safely ---
+    def get_arr(key, dtype=None):
+        return np.array(data[key], dtype=dtype)
+
+    # --- 2. REGENERATE UID ---
+    if 'uid' not in data:
+        uids = np.random.randint(0, 2 ** 63 - 1, size=num_particles, dtype=np.uint64)
+        dtype_list.append(('uid', '<u8'))
+        output_arrays['uid'] = uids
+    else:
+        dtype_list.append(('uid', '<u8'))
+        output_arrays['uid'] = get_arr('uid', dtype=np.uint64)
+        consumed_keys.add('uid')
+
+    # --- 3. HANDLE STANDARD FIELDS ---
+
+    # Pixel size
+    psize = 1.0
+    if '_rlnPixelSize' in data:
+        psize = get_arr('_rlnPixelSize', dtype=np.float32)
+        dtype_list.append(('blob/psize_A', '<f4'))
+        output_arrays['blob/psize_A'] = psize
+        consumed_keys.add('_rlnPixelSize')
+        consumed_keys.add('_rlnDetectorPixelSize')
+    elif 'blob/psize_A' in data:
+        psize = get_arr('blob/psize_A', dtype=np.float32)
+
+    # 3a. Pose
+    if all(k in data for k in ['_rlnAngleRot', '_rlnAngleTilt', '_rlnAnglePsi']):
+        eulers = np.stack([
+            get_arr('_rlnAngleRot'),
+            get_arr('_rlnAngleTilt'),
+            get_arr('_rlnAnglePsi')
+        ], axis=1)
+        rot = R.from_euler('ZYZ', eulers, degrees=True)
+        pose_vecs = rot.as_rotvec().astype(np.float32)
+
+        dtype_list.append(('alignments3D/pose', '<f4', (3,)))
+        output_arrays['alignments3D/pose'] = pose_vecs
+        consumed_keys.update(['_rlnAngleRot', '_rlnAngleTilt', '_rlnAnglePsi'])
+
+    # 3b. Shift
+    if '_rlnOriginXAngst' in data:
+        shift_x = get_arr('_rlnOriginXAngst')
+        shift_y = get_arr('_rlnOriginYAngst')
+        scale = 1.0 / psize if np.ndim(psize) == 0 else 1.0 / psize
+        shift_vecs = np.stack([shift_x * scale, shift_y * scale], axis=1).astype(np.float32)
+
+        dtype_list.append(('alignments3D/shift', '<f4', (2,)))
+        output_arrays['alignments3D/shift'] = shift_vecs
+        consumed_keys.update(['_rlnOriginXAngst', '_rlnOriginYAngst'])
+
+    # 3c. Images
+    if '_rlnImageName' in data:
+        image_strings = get_arr('_rlnImageName').astype(str)
+
+        def parse_relion_path(s):
+            if '@' in s:
+                idx, p = s.split('@', 1)
+                return int(idx) - 1, p
+            return 0, s
+
+        parsed = [parse_relion_path(s) for s in image_strings]
+        indices = np.array([p[0] for p in parsed], dtype=np.int32)
+        paths = np.array([p[1] for p in parsed])
+
+        dtype_list.append(('blob/idx', '<u4'))
+        output_arrays['blob/idx'] = indices
+
+        max_len = max(len(p.encode('utf-8')) for p in paths) + 10
+        s_type = f'|S{max_len}'
+        dtype_list.append(('blob/path', s_type))
+        output_arrays['blob/path'] = np.char.encode(paths, 'utf-8')
+        consumed_keys.add('_rlnImageName')
+
+    if '_rlnMicrographName' in data:
+        paths = get_arr('_rlnMicrographName').astype(str)
+        max_len = max(len(p.encode('utf-8')) for p in paths) + 10
+        s_type = f'|S{max_len}'
+        dtype_list.append(('blob/micrograph_blob/path', s_type))
+        output_arrays['blob/micrograph_blob/path'] = np.char.encode(paths, 'utf-8')
+        consumed_keys.add('_rlnMicrographName')
+
+    # 3d. CTF
+    ctf_map = {
+        '_rlnDefocusU': 'ctf/defocus_u',
+        '_rlnDefocusV': 'ctf/defocus_v',
+        '_rlnVoltage': 'ctf/accel_kv',
+        '_rlnSphericalAberration': 'ctf/cs_mm',
+        '_rlnAmplitudeContrast': 'ctf/amp_contrast'
+    }
+    for rln, cs in ctf_map.items():
+        if rln in data:
+            dtype_list.append((cs, '<f4'))
+            output_arrays[cs] = get_arr(rln, dtype=np.float32)
+            consumed_keys.add(rln)
+
+    if '_rlnDefocusAngle' in data:
+        rads = np.radians(get_arr('_rlnDefocusAngle', dtype=np.float32))
+        dtype_list.append(('ctf/defocus_angle', '<f4'))
+        output_arrays['ctf/defocus_angle'] = rads
+        consumed_keys.add('_rlnDefocusAngle')
+
+    if '_rlnPhaseShift' in data:
+        rads = np.radians(get_arr('_rlnPhaseShift', dtype=np.float32))
+        dtype_list.append(('ctf/phase_shift_rad', '<f4'))
+        output_arrays['ctf/phase_shift_rad'] = rads
+        consumed_keys.add('_rlnPhaseShift')
+
+    # --- 4. ROBUST PASS-THROUGH LOGIC ---
+    for key in data:
+        if key not in consumed_keys and not key.startswith('_rln'):
+
+            raw_vals = data[key]
+            final_arr = None
+
+            try:
+                test_arr = np.array(list(raw_vals))
+
+                # Validation: Skip garbage columns (header/metadata mismatch)
+                is_string = (test_arr.dtype.kind in ('U', 'S')) or \
+                            (test_arr.dtype.kind == 'O' and len(test_arr) > 0 and isinstance(raw_vals[0],
+                                                                                             (str, np.str_)))
+
+                if len(test_arr) != num_particles:
+                    if num_particles == 1 and not is_string:
+                        final_arr = test_arr.reshape(1, -1)
+                    else:
+                        # Warning is suppressed for standard rlnOptics columns that are naturally dropped here
+                        continue
+
+                if final_arr is None:
+                    if test_arr.dtype.kind == 'O' and not is_string:
+                        final_arr = np.vstack(raw_vals).astype(np.float32)
+                    elif is_string:
+                        s_vals = np.array([str(x) for x in raw_vals])
+                        max_len = max(len(s.encode('utf-8')) for s in s_vals) + 10
+                        s_type = f'|S{max_len}'
+                        dtype_list.append((key, s_type))
+                        output_arrays[key] = np.char.encode(s_vals, 'utf-8')
+                        continue
+                    else:
+                        if np.issubdtype(test_arr.dtype, np.integer):
+                            final_arr = test_arr.astype(np.int32)
+                        else:
+                            final_arr = test_arr.astype(np.float32)
+
+                shape = final_arr.shape[1:]
+                if np.issubdtype(final_arr.dtype, np.integer):
+                    base_type = '<i4'
+                else:
+                    base_type = '<f4'
+
+                if shape:
+                    dtype_list.append((key, base_type, shape))
+                else:
+                    dtype_list.append((key, base_type))
+
+                output_arrays[key] = final_arr
+
+            except Exception:
+                continue
+
+    # --- 5. SAVE ---
+    cs_array = np.zeros(num_particles, dtype=dtype_list)
+    for name in output_arrays:
+        try:
+            cs_array[name] = output_arrays[name]
+        except Exception:
+            pass
+
+    np.save(output_filename, cs_array)
+    shutil.move(output_filename + ".npy", output_filename)
 
 
 def fibonacci_sphere(samples):

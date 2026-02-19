@@ -36,18 +36,18 @@ requirements:
     - emtable
     - morphsnakes
     - mrcfile
-    - numpy <=1.23.0
+    - numpy<=2.2.6
     - pandas<=2.1.4
-    - pillow ==8.4.0   # [ py == 36 ]
-    - pillow ==9.2.0   # [ py >= 37 ]
+    - pillow==8.4.0   # [ py == 36 ]
+    - pillow==12.1.0   # [ py >= 37 ]
     - python
-    - scikit-image<=0.24.0
+    - scikit-image<=0.26.0
     - starfile!=0.5.0
     - joblib
     - pytest
     - trimesh
     - matplotlib==3.7.3  # [ py == 38 ]
-    - matplotlib==3.8.1  # [ py >= 39 ]
+    - matplotlib==3.10.8  # [ py >= 39 ]
 
 test:
   imports:

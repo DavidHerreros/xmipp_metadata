@@ -36,7 +36,7 @@ import pandas as pd
 import starfile
 
 from xmipp_metadata.image_handler.image_handler import ImageHandler
-from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels, read_cs_to_relion_df, write_dict_to_cs
+from xmipp_metadata.utils import relion_df_to_xmipp_labels, xmipp_df_to_relion_labels, read_cs_to_relion_df, write_dict_to_cs
 
 
 class XmippMetaData(object):
@@ -48,7 +48,6 @@ class XmippMetaData(object):
         :param readFrom (string - Optional) --> Can take values:
             - Auto: Determine automatically the best way to read the file
             - Pandas: Read the metadata file as a Pandas table
-            - EMTable: Read the metadata file as a EMTable, which will be converted to Pandas later
     '''
 
     DEBUG = False
@@ -135,11 +134,9 @@ class XmippMetaData(object):
                 else:
                     self.table = starfile.read(file_name)
             except ValueError:
-                self.table = emtable_2_pandas(file_name)
+                raise ValueError(f"Cannot read the specified format: {os.path.splitext(file_name)[1]}")
         elif readFrom == "Pandas":
             self.table = starfile.read(file_name)
-        elif readFrom == "EMTable":
-            self.table = emtable_2_pandas(file_name)
         elif readFrom == "CryoSparc":
             self.table = read_cs_to_relion_df(file_name)
 

@@ -5,6 +5,7 @@ pandas<=2.2.3
 starfile!=0.5.0
 mrcfile
 emfile
+emtable
 scikit-image<=0.26.0
 morphsnakes
 joblib

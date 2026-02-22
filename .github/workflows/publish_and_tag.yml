@@ -30,21 +30,20 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install setuptools wheel twine
-    - name: Add conda to system path
-      run: |
-        # $CONDA is an environment variable pointing to the root of the miniconda directory
-        echo $CONDA/bin >> $GITHUB_PATH
-    - name: Publish to Conda
-      env:
-        ANACONDA_API_TOKEN: ${{ secrets.ANACONDA_TOKEN }}
-      run: |
-        eval "$(conda shell.bash hook)"
-        conda activate
-        conda config --add channels conda-forge
-        conda config --add channels dherreros
-        conda install -y anaconda-client conda-build conda-verify --update-deps
-        conda build conda/
-        anaconda -t "$ANACONDA_API_TOKEN" upload /usr/share/miniconda/conda-bld/linux-64/xmipp_metadata-*-py*
+#    - name: Add conda to system path
+#      run: |
+#        # $CONDA is an environment variable pointing to the root of the miniconda directory
+#        echo $CONDA/bin >> $GITHUB_PATH
+#    - name: Publish to Conda
+#      run: |
+#        eval "$(conda shell.bash hook)"
+#        conda activate
+#        conda config --add channels conda-forge
+#        conda config --add channels dherreros
+#        conda install -y anaconda-client conda-build conda-verify
+#        anaconda login --username ${{ secrets.ANACONDA_USERNAME }} --password ${{ secrets.ANACONDA_PASSWORD }}
+#        conda build conda/
+#        anaconda upload /usr/share/miniconda/conda-bld/linux-64/xmipp_metadata-*-py*
     - name: Build and publish Pypi
       env:
         TWINE_USERNAME: ${{ secrets.PYPI_USERNAME }}

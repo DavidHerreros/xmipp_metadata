@@ -15,12 +15,13 @@ build:
 requirements:
   host:
     - emfile
+    - emtable
     - morphsnakes
     - mrcfile
-    - numpy<=1.23.0
+    - numpy <=1.23.0
     - pandas<=2.1.4
-    - pillow==8.4.0   # [ py == 36 ]
-    - pillow==9.2.0   # [ py >= 37 ]
+    - pillow ==8.4.0   # [ py == 36 ]
+    - pillow ==9.2.0   # [ py >= 37 ]
     - pip
     - python
     - scikit-image<=0.24.0
@@ -32,6 +33,7 @@ requirements:
     - matplotlib==3.8.1  # [ py >= 39 ]
   run:
     - emfile
+    - emtable
     - morphsnakes
     - mrcfile
     - numpy<=2.2.6

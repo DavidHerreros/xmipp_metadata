@@ -28,6 +28,7 @@
 import shutil
 import numpy as np
 import math
+from emtable import Table
 import pandas as pd
 from typing import Dict, Union, Optional, Literal
 from scipy.interpolate import RegularGridInterpolator
@@ -174,6 +175,26 @@ XMIPP_TO_RELION_OPTICS = {
     # Add more group-level fields if you keep them at optics scope in your workflow,
     # e.g. "samplingRate": "rlnImagePixelSize" (if you maintain such a column).
 }
+
+
+def emtable_2_pandas(file_name):
+    """Convert an EMTable object to a Pandas dataframe to be used by XmippMetaData class"""
+
+    # Read EMTable
+    table = Table(fileName=file_name)
+
+    # Init Pandas table
+    pd_table = []
+
+    # Iter rows and set data
+    for row in table:
+        row = row._asdict()
+        for key, value in row.items():
+            if isinstance(value, str) and not "@" in value:
+                row[key] = value.replace(" ", ",")
+        pd_table.append(pd.DataFrame([row]))
+
+    return pd.concat(pd_table, ignore_index=True)
 
 
 def _choose_particles_table(star_obj: Dict[str, pd.DataFrame]) -> str:

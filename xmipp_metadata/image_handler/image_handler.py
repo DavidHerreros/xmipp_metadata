@@ -544,7 +544,7 @@ class ImageHandler(object):
 
         return projections, euler_angles
 
-    def exportVolumetoPPT(self, outputFn, inputFn=None, colorsFn=None):
+    def exportVolumetoPPT(self, outputFn, inputFn=None, colorsFn=None, alpha=255.):
         # Read the volume
         if inputFn is not None:
             vol = ImageHandler().read(inputFn).getData()
@@ -599,13 +599,15 @@ class ImageHandler(object):
 
         # Convert to 0-255 uint8
         rgba = (colors_rgba * 255).astype(np.uint8)
+        rgba[:, -1] = alpha
         mesh.visual.vertex_colors = rgba
 
         # Material settings
         material = trimesh.visual.material.PBRMaterial(
             roughnessFactor=1.0,
             metallicFactor=0.0,
-            baseColorFactor=[255, 255, 255, 255]
+            baseColorFactor=[255, 255, 255, 255],
+            alphaMode='BLEND'
         )
         mesh.visual.material = material
 
@@ -620,3 +622,81 @@ class ImageHandler(object):
         '''
         if isinstance(self.BINARIES, ImageSpider):
             self.BINARIES.close()
+
+    def save_points_to_glb(self, coords, values, file_path, point_size=0.01, alpha=255.0, cmap_name="viridis", color=None):
+        """
+        Converts 3D coordinates and scalar values into a PowerPoint-compatible GLB file.
+
+        Parameters:
+            coords (np.ndarray): (N, 3) array of XYZ coordinates.
+            values (np.ndarray): (N,) array of scalar values for coloring.
+            file_path (str): The output file path (e.g., 'my_model.glb').
+            point_size (float): The radius of the generated spheres.
+            cmap_name (str): Matplotlib colormap to use.
+        """
+        coords = np.asarray(coords)
+        values = np.asarray(values)
+        N = len(coords)
+
+        # Create a single low-poly "base sphere"
+        # subdivisions=1 creates an icosphere with 42 vertices (perfect for keeping file size tiny)
+        base_sphere = trimesh.creation.icosphere(subdivisions=1, radius=point_size)
+        V = base_sphere.vertices
+        F = base_sphere.faces
+
+        V_len = len(V)
+        F_len = len(F)
+
+        # Vectorized Duplication & Translation
+        # Clone the base vertices N times and shift them by the coordinates
+        vertices = np.tile(V, (N, 1)) + np.repeat(coords, V_len, axis=0)
+
+        # Shift the face indices so they point to the correct newly cloned vertices
+        offsets = np.arange(N) * V_len
+        faces = np.tile(F, (N, 1)) + np.repeat(offsets, F_len)[:, None]
+
+        if color is None:
+            # Color processing
+            p2, p98 = np.percentile(values, [2, 98])
+            v_clipped = np.clip(values, p2, p98)
+            v_norm = (v_clipped - p2) / (p98 - p2)
+            cmap = plt.get_cmap(cmap_name)
+
+            # Get base colors (0.0 to 1.0 floats)
+            colors_rgba = cmap(v_norm)
+
+            # Gamma correction of colors
+            gamma = 3.5
+            colors_rgba[:, :3] = np.power(colors_rgba[:, :3], gamma)
+
+            # Get RGBA colors (0-255) for each sphere
+            sphere_colors = (colors_rgba * 255).astype(np.uint8)
+
+            # Apply the specific color to every vertex of its respective sphere
+            vertex_colors = np.repeat(sphere_colors, V_len, axis=0)
+        else:
+            rgba_color = np.array(color, dtype=np.uint8)
+            vertex_colors = np.tile(rgba_color, (len(vertices), 1))
+
+        # Control alpha
+        vertex_colors[:, -1] = alpha
+
+        # Assemble and Export
+        # Combine everything into a single, highly-optimized Trimesh object
+        mesh = trimesh.Trimesh(
+            vertices=vertices,
+            faces=faces,
+            vertex_colors=vertex_colors
+        )
+
+        # Material settings
+        material = trimesh.visual.material.PBRMaterial(
+            roughnessFactor=1.0,
+            metallicFactor=0.0,
+            baseColorFactor=[255, 255, 255, 255],
+            alphaMode='BLEND'
+        )
+        mesh.visual.material = material
+
+        # Export explicitly as GLB
+        mesh.export(file_path, file_type='glb')

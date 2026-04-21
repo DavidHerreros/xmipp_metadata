@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools<81", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "xmipp_metadata"
+dynamic = ["version", "dependencies"]
+description = "Package to handle Xmipp Metadata and image binary data"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+
+[tool.setuptools.packages.find]
+where = ["."]
+namespaces = false
+
+[tool.setuptools.dynamic]
+version = {attr = "xmipp_metadata.__version__"}
+dependencies = {file = ["requirements.txt"]}

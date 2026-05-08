@@ -99,6 +99,19 @@ class XmippMetaData(object):
             remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
             for label in remain:
                 self.table[label] = 0.0
+        elif isinstance(rows, pd.DataFrame):
+            self.table = rows
+
+            try:
+                self.binaries = True
+                _ = self.getMetaDataImage(0)
+            except (FileNotFoundError, KeyError):
+                self.binaries = False
+
+            # Fill non-existing columns
+            remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
+            for label in remain:
+                self.table[label] = 0.0
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
             self.binaries = False
@@ -113,12 +126,12 @@ class XmippMetaData(object):
         for _, row in self.table.iterrows():
             yield row
 
-    def __getitem__(self, item):
+    def __getitem__(self, item, to_numpy=False):
         extracted = self.table.loc[item]
-        if hasattr(extracted, "to_numpy"):
+        if hasattr(extracted, "to_numpy") and to_numpy:
             return extracted.to_numpy().copy()
         else:
-            return extracted
+            return XmippMetaData(rows=extracted)
 
     def __setitem__(self, key, value):
         self.table.loc[key] = value

@@ -26,9 +26,16 @@
 
 
 import struct
+import threading
 import numpy as np
 from pathlib import Path
 import os
+
+
+# Positional reads are atomic and leave the file pointer alone, so several threads can
+# read one handle at once. Not available on every platform (Windows has no os.pread), and
+# there the reads fall back to a locked seek + read instead.
+_HAS_PREAD = hasattr(os, "pread")
 
 
 class ImageSpider(object):
@@ -41,7 +48,14 @@ class ImageSpider(object):
     TYPE = None
     DEBUG = False
 
+    # Class-level defaults so close()/__del__ stay safe even if __init__ raises before
+    # the handle is opened (a missing or unreadable file)
+    stk_handler = None
+    header_info = None
+    IMG_BYTES = None
+
     def __init__(self, filename=None):
+        self._lock = threading.Lock()
         if filename:
             self.stk_handler = open(filename, "rb")
             self.header_info = self.read_header()
@@ -86,28 +100,51 @@ class ImageSpider(object):
         Reads a given image
            :param filename (str) --> Image to be read
         '''
+        self._lock = threading.Lock()
         self.stk_handler = open(filename, "rb")
         self.header_info = self.read_header()
         self.IMG_BYTES = self.FLOAT32_BYTES * self.header_info["n_columns"] ** 2
 
-    def read_binary(self, start, end):
+    def read_binary(self, start, n_bytes):
         '''
-        Read bytes between start and end
+        Read ``n_bytes`` bytes starting at byte ``start``.
+
+        A handler is shared between threads (see ``getImageHandler``'s cache), so this
+        must not read through the handle's own file pointer: a bare seek + read lets a
+        second thread move the pointer in between, and the first one then reads at the
+        wrong offset. In a stack that offset lands in a neighbouring image or in one of
+        the interleaved 1024-byte SPIDER headers, so the corruption is silent -- plausible
+        looking floats, no exception. ``os.pread`` takes the offset per call and never
+        touches the shared pointer, which keeps concurrent reads both correct and parallel.
             :param start (int) --> Start byte
-            :param end (int) --> End byte
+            :param n_bytes (int) --> Number of bytes to read
             :returns the bytes read
         '''
-        self.seek(start)
-        return self.stk_handler.read(end)
+        if _HAS_PREAD:
+            fd = self.stk_handler.fileno()
+            chunks, offset, remaining = [], start, n_bytes
+            while remaining > 0:
+                chunk = os.pread(fd, remaining, offset)
+                if not chunk:  # EOF: return what the file actually holds, as read() would
+                    break
+                chunks.append(chunk)
+                offset += len(chunk)
+                remaining -= len(chunk)
+            return chunks[0] if len(chunks) == 1 else b"".join(chunks)
 
-    def read_numpy(self, start, end):
+        # No pread: serialise the seek and the read together so they cannot interleave
+        with self._lock:
+            self.seek(start)
+            return self.stk_handler.read(n_bytes)
+
+    def read_numpy(self, start, n_bytes):
         '''
-        Read bytes between start and end as a Numpy array
+        Read bytes as a Numpy array
             :param start (int) --> Start byte
-            :param end (int) --> End byte
+            :param n_bytes (int) --> Number of bytes to read
             :returns decoded bytes as Numpy array
         '''
-        return np.frombuffer(self.read_binary(start, end), dtype=np.float32)
+        return np.frombuffer(self.read_binary(start, n_bytes), dtype=np.float32)
 
     def seek(self, pos):
         '''

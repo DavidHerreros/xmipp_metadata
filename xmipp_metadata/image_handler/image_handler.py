@@ -93,17 +93,47 @@ class ImageHandler(object):
                 self.binary_file = binary_file
                 self.BINARIES = ImageArray(self.binary_file)
 
-    def __getitem__(self, item):
+    def _backingArray(self):
+        '''
+        The buffer a read may alias (the memory map, or an in-RAM array), or None
+        for backends whose reads always allocate a fresh array (Spider).
+        '''
         if isinstance(self.BINARIES, ImageMRC):
-            return self.BINARIES[item].copy()
-        elif isinstance(self.BINARIES, ImageSpider):
-            return self.BINARIES[item].copy()
-        elif isinstance(self.BINARIES, ImageEM):
-            return self.BINARIES.data[item].copy()
-        elif isinstance(self.BINARIES, ImageArray):
-            return self.BINARIES[item].copy()
+            return self.BINARIES.mrc_handle.data
+        elif isinstance(self.BINARIES, (ImageEM, ImageArray)):
+            return self.BINARIES.data
         else:
             return None
+
+    def getBlock(self, item):
+        '''
+        Read images without the defensive copy made by __getitem__. The result MAY
+        be a view into the memory map, so it is only valid while this handler is
+        alive, and writing to it would write to the file. Callers that need to own
+        the data (or outlive the handler) must copy it themselves.
+            :param item (int - list - ndarray - slice) --> Images to be read
+            :returns: Images as a Numpy array, possibly aliasing the binary file
+        '''
+        if isinstance(self.BINARIES, ImageEM):
+            return self.BINARIES.data[item]
+        elif self.BINARIES is not None:
+            return self.BINARIES[item]
+        else:
+            return None
+
+    def __getitem__(self, item):
+        data = self.getBlock(item)
+        if data is None:
+            return None
+
+        # Fancy indexing already allocates a fresh array, so copying it again just
+        # duplicates the whole block. Only slices and scalar indices hand back a
+        # view into the underlying buffer, and those must not escape to the caller.
+        source = self._backingArray()
+        if source is not None and np.may_share_memory(data, source):
+            data = data.copy()
+
+        return data
 
     def __len__(self):
         if isinstance(self.BINARIES, ImageSpider):

@@ -73,7 +73,7 @@ class ImageMRC(object):
             :param filename (str) --> Image to be read
         '''
         try:
-            self.mrc_handle = mrcfile.mmap(filename, mode='r+')
+            self.mrc_handle = mrcfile.mmap(filename, mode='r')
             self.header = self.mrc_handle.header
         except ValueError as e:
             print("MRC file header is not valid and raised the following error: ")

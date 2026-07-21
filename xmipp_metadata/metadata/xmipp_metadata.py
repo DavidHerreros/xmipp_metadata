@@ -29,6 +29,8 @@ import numpy as np
 
 import os
 
+from functools import lru_cache
+
 from pathlib import Path
 
 import pandas as pd
@@ -37,6 +39,40 @@ import starfile
 
 from xmipp_metadata.image_handler.image_handler import ImageHandler
 from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels, read_cs_to_relion_df, write_dict_to_cs
+
+
+@lru_cache(maxsize=32)
+def _openImageHandler(path, stamp):
+    return ImageHandler(path)
+
+
+def getImageHandler(path):
+    '''
+    Return an ImageHandler for a stack, reusing an already open one when possible.
+    Opening a handler re-parses the file header and remaps the binary, which is
+    wasted work when a batch of images is read from the same stack over and over.
+
+    The cache is keyed on the file's mtime and size as well as its path, so a stack
+    that has been rewritten is never served stale from the cache.
+        :param path (string) --> Path to the binary file
+        :returns: an ImageHandler for that file
+    '''
+    path = str(path)
+    try:
+        stat = os.stat(path)
+        stamp = (stat.st_mtime_ns, stat.st_size)
+    except OSError:
+        stamp = None  # let ImageHandler raise on a missing file, as before
+
+    return _openImageHandler(path, stamp)
+
+
+def _isContiguousRun(index):
+    '''
+    True if index is a run of consecutive ascending integers, so it can be read as a
+    plain slice instead of a fancy index.
+    '''
+    return index.size > 1 and bool(np.all(np.diff(index) == 1))
 
 
 class XmippMetaData(object):
@@ -59,11 +95,18 @@ class XmippMetaData(object):
                             'xcoor', 'ycoor']
 
     def __init__(self, file_name=None, rows=None, readFrom="Auto", **kwargs):
+        # Directory the metadata was read from. Relative image paths in the metadata are
+        # defined relative to this directory (not the process CWD), so it is the base used
+        # to re-resolve them when writing elsewhere (see ``write(updateImagePaths=True)``).
+        # ``None`` for metadata built in-memory (no source file), in which case the CWD is
+        # used as a best-effort fallback.
+        self._source_dir = None
         if file_name:
             if isinstance(file_name, str):
                 if file_name.split(".")[-1] in ["xmd", "star", "cs"]:
                     self.read(file_name, readFrom)
                 elif file_name.split(".")[-1] in ["stk", "mrcs"]:  # Create new metadata from images
+                    self._source_dir = os.path.dirname(os.path.abspath(file_name))
                     # Fill metadata with images
                     num_images = len(ImageHandler(file_name))
                     angles = kwargs.pop("angles", np.zeros([num_images, 3]))
@@ -99,6 +142,19 @@ class XmippMetaData(object):
             remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
             for label in remain:
                 self.table[label] = 0.0
+        elif isinstance(rows, pd.DataFrame):
+            self.table = rows
+
+            try:
+                self.binaries = True
+                _ = self.getMetaDataImage(0)
+            except (FileNotFoundError, KeyError):
+                self.binaries = False
+
+            # Fill non-existing columns
+            remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
+            for label in remain:
+                self.table[label] = 0.0
         else:
             self.table = pd.DataFrame(self.DEFAULT_COLUMN_NAMES)
             self.binaries = False
@@ -114,11 +170,35 @@ class XmippMetaData(object):
             yield row
 
     def __getitem__(self, item):
-        extracted = self.table.loc[item]
+        '''
+        Slice the metadata. Indexing returns plain values by default -- a Numpy array for
+        a row/column selection, and the cell itself for a single entry -- so that
+        md[rows, "column"] can be used directly in arithmetic and string handling.
+
+        To get the slice back as a metadata object instead, pass "metadata" as a third
+        index element: md[rows, columns, "metadata"].
+            :param item --> row, (row, column), or (row, column, flag)
+            :returns: Numpy array, a single cell value, or an XmippMetaData
+        '''
+        if isinstance(item, tuple) and len(item) == 3 and isinstance(item[-1], str):
+            row, col, flag = item
+        elif isinstance(item, tuple):
+            row, col = item
+            flag = "numpy"
+        else:
+            row, col, flag = item, slice(None), "numpy"
+
+        extracted = self.table.loc[row, col]
+
+        if flag != "numpy":
+            return XmippMetaData(rows=extracted)
+
         if hasattr(extracted, "to_numpy"):
             return extracted.to_numpy().copy()
-        else:
-            return extracted
+
+        # A single cell is already a plain value (a string, a float...) and has nothing
+        # to convert -- handing it back wrapped would break every caller that uses it
+        return extracted
 
     def __setitem__(self, key, value):
         self.table.loc[key] = value
@@ -128,6 +208,10 @@ class XmippMetaData(object):
         Read a metadata file
             :param file_name (string) --> Path to metadata file
         '''
+        # Relative image paths in this file are defined relative to its own directory;
+        # remember it so a later write to a different location can re-resolve them.
+        self._source_dir = os.path.dirname(os.path.abspath(file_name))
+
         if readFrom == "Auto":
             try:
                 if os.path.splitext(file_name)[1] == ".cs":
@@ -172,9 +256,13 @@ class XmippMetaData(object):
             except ValueError as e:
                 index, file = "", image
 
-            # Image absolute path
+            # Image absolute path. A relative path is defined relative to the directory the
+            # metadata was read from (``_source_dir``), NOT the process CWD -- resolving it
+            # against CWD would silently point to the wrong stack whenever the program runs
+            # from elsewhere. Fall back to CWD only for in-memory metadata with no source.
             if not os.path.isabs(file):
-                file = os.path.abspath(file)
+                base = self._source_dir if self._source_dir is not None else os.getcwd()
+                file = os.path.abspath(os.path.join(base, file))
 
             # Get new relative path
             file = Path(file).resolve()
@@ -279,53 +367,70 @@ class XmippMetaData(object):
         '''
         self.table.loc[:, column_names] = columns
 
-    def getMetaDataImage(self, row_id):
+    def getMetaDataImage(self, row_id, dtype=None):
         '''
         Returns a set of images read from the metadata
             :param row_id (list - int) --> Row indices from where to read the images
+            :param dtype (Numpy dtype - Optional) --> Cast the images to this dtype while
+                                                      they are read. Fusing the cast into
+                                                      the read avoids materialising a
+                                                      full-precision copy of the batch
+                                                      first, which halves the memory
+                                                      traffic when reading a float32 stack
+                                                      into, say, float16.
             :returns: Images from metadata as Numpy array (N x Y x X)
         '''
-        if self.binaries:
-            images_rows = self.getMetadataItems(row_id, 'image')
-            stack_id = {}
-            stack_order = {}
-            order_id = 0
-            for row in images_rows:
-                image_id, path = row.split('@') if "@" in row else (row_id, row)
-                if path not in stack_id.keys():
-                    stack_id[path] = [int(image_id) - 1, ]
-                    stack_order[path] = [order_id, ]
-                    order_id += 1
-                else:
-                    stack_id[path].append(int(image_id) - 1)
-                    stack_order[path].append(order_id)
-                    order_id += 1
-
-            # Read binary file (if needed)
-            images = []
-            order = []
-            for key, values in stack_id.items():
-                order.append(np.asarray(stack_order[key]))
-                ih = ImageHandler(key)
-                if len(ih) == len(values) == 1:
-                    images.append(ih.getData()[None, ...])
-                else:
-                    images.append(ih[values])
-            order = np.hstack(order)
-            images = np.squeeze(np.vstack(images))
-
-            if order.size > 1:
-                # Create an empty array of the same shape as the original array
-                reordered_images = np.empty_like(images)
-
-                # Reorder the original array based on the order vector
-                reordered_images[order] = images
-
-                return reordered_images
-            else:
-                return images
-        else:
+        if not self.binaries:
             print("Binaries not found...")
+            return
+
+        images_rows = self.getMetadataItems(row_id, 'image')
+
+        # Group the requested images by the stack holding them, remembering the position
+        # each one has to occupy in the output
+        stack_id = {}
+        stack_order = {}
+        for order_id, row in enumerate(images_rows):
+            image_id, path = row.split('@') if "@" in row else (row_id, row)
+            stack_id.setdefault(path, []).append(int(image_id) - 1)
+            stack_order.setdefault(path, []).append(order_id)
+
+        # The output is allocated once and every stack is read straight into its final
+        # slots, so the pixels are copied exactly once (with the cast folded in) instead
+        # of being stacked and then reordered
+        images = None
+        for key, values in stack_id.items():
+            ih = getImageHandler(key)
+            positions = np.asarray(stack_order[key])
+
+            if len(ih) == len(values) == 1:
+                block = ih.getData()[None, ...]
+            else:
+                index = np.asarray(values)
+
+                # Read in file order. A consecutive run collapses to a plain slice, and
+                # even a scattered read costs less walked sequentially than jumping
+                # back and forth across the stack.
+                sorter = np.argsort(index, kind="stable")
+                index, positions = index[sorter], positions[sorter]
+
+                if _isContiguousRun(index):
+                    block = ih.getBlock(slice(int(index[0]), int(index[-1]) + 1))
+                else:
+                    block = ih.getBlock(index)
+
+            if images is None:
+                images = np.empty((len(images_rows),) + block.shape[1:],
+                                  dtype=block.dtype if dtype is None else dtype)
+
+            # getBlock may hand back a view into the memory map; this assignment is what
+            # copies it out (and casts it), so nothing aliases the file afterwards
+            if _isContiguousRun(positions):
+                images[int(positions[0]):int(positions[-1]) + 1] = block
+            else:
+                images[positions] = block
+
+        return np.squeeze(images)
 
     def getMetaDataLabels(self):
         '''

@@ -95,11 +95,18 @@ class XmippMetaData(object):
                             'xcoor', 'ycoor']
 
     def __init__(self, file_name=None, rows=None, readFrom="Auto", **kwargs):
+        # Directory the metadata was read from. Relative image paths in the metadata are
+        # defined relative to this directory (not the process CWD), so it is the base used
+        # to re-resolve them when writing elsewhere (see ``write(updateImagePaths=True)``).
+        # ``None`` for metadata built in-memory (no source file), in which case the CWD is
+        # used as a best-effort fallback.
+        self._source_dir = None
         if file_name:
             if isinstance(file_name, str):
                 if file_name.split(".")[-1] in ["xmd", "star", "cs"]:
                     self.read(file_name, readFrom)
                 elif file_name.split(".")[-1] in ["stk", "mrcs"]:  # Create new metadata from images
+                    self._source_dir = os.path.dirname(os.path.abspath(file_name))
                     # Fill metadata with images
                     num_images = len(ImageHandler(file_name))
                     angles = kwargs.pop("angles", np.zeros([num_images, 3]))
@@ -201,6 +208,10 @@ class XmippMetaData(object):
         Read a metadata file
             :param file_name (string) --> Path to metadata file
         '''
+        # Relative image paths in this file are defined relative to its own directory;
+        # remember it so a later write to a different location can re-resolve them.
+        self._source_dir = os.path.dirname(os.path.abspath(file_name))
+
         if readFrom == "Auto":
             try:
                 if os.path.splitext(file_name)[1] == ".cs":
@@ -245,9 +256,13 @@ class XmippMetaData(object):
             except ValueError as e:
                 index, file = "", image
 
-            # Image absolute path
+            # Image absolute path. A relative path is defined relative to the directory the
+            # metadata was read from (``_source_dir``), NOT the process CWD -- resolving it
+            # against CWD would silently point to the wrong stack whenever the program runs
+            # from elsewhere. Fall back to CWD only for in-memory metadata with no source.
             if not os.path.isabs(file):
-                file = os.path.abspath(file)
+                base = self._source_dir if self._source_dir is not None else os.getcwd()
+                file = os.path.abspath(os.path.join(base, file))
 
             # Get new relative path
             file = Path(file).resolve()

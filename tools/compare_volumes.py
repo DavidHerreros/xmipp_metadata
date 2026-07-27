@@ -77,13 +77,19 @@ def main():
     a, b = z(ref), z(test)
 
     cc = float((a * b).mean())
-    print(f"\nreal-space correlation      {cc: .4f}")
-
-    # a global handedness flip is the single most common convention error, and it
-    # is invisible to anything that only looks at the power spectrum
     cc_flip = float((a * z(test[::-1, ::-1, ::-1])).mean())
-    print(f"correlation, map inverted   {cc_flip: .4f}"
-          + ("   <-- the test map is MIRRORED" if cc_flip > cc + 0.1 else ""))
+
+    # Compare MAGNITUDES. A globally contrast-inverted map makes both correlations
+    # negative, and a signed comparison then reports the mirror as the better match and
+    # cries "mirrored" about a map that is merely negated -- which is a different bug
+    # with a different fix, so conflating them sends you hunting the wrong thing.
+    inverted = cc < 0 and abs(cc) > 0.5
+    mirrored = abs(cc_flip) > abs(cc) + 0.1
+
+    print(f"\nreal-space correlation      {cc: .4f}"
+          + ("   <-- CONTRAST INVERTED (same map, opposite sign)" if inverted else ""))
+    print(f"correlation, map mirrored   {cc_flip: .4f}"
+          + ("   <-- the test map is MIRRORED" if mirrored else ""))
 
     c = fsc(a, b)
     n = ref.shape[0]
@@ -94,10 +100,19 @@ def main():
         print(f"{i:>6} {i / (n * (apix or 1.0)):>10.4f} {res:>8.1f}{unit} {c[i]:>8.4f}")
 
     good = c[1:len(c) - 1]
-    print(f"\nmedian FSC over all shells  {np.median(good): .4f}")
-    if np.median(good) > 0.95:
+    # Judge on |FSC|: a sign flip is a one-line fix, not a disagreement about geometry,
+    # and reporting it as one would bury a result that is otherwise a pass.
+    med, med_abs = float(np.median(good)), float(np.median(np.abs(good)))
+    print(f"\nmedian FSC over all shells  {med: .4f}   (|FSC| {med_abs:.4f})")
+    signal = good[np.abs(good) > 0.5]
+    if signal.size and np.all(signal < 0):
+        print(f"CONTRAST INVERTED but otherwise IDENTICAL: |FSC| {med_abs:.4f} over the "
+              f"{signal.size} shells carrying signal.")
+        print("      The geometry agrees; only the overall sign differs. Look at the CTF "
+              "sign convention, not at the poses.")
+    elif med > 0.95:
         print("the two reconstructions agree -- the conversion is exact")
-    elif cc_flip > cc + 0.1:
+    elif mirrored:
         print("MIRRORED: check rlnTomoHand / the sign of the tilt angles")
     elif good[:len(good) // 4].mean() < 0.5:
         print("disagreement from the lowest shells -- a pose or shift convention "

@@ -25,3 +25,10 @@
 # **************************************************************************
 
 from .xmipp_metadata import XmippMetaData
+from .relion_tomo import (TiltSeriesGeometry, read_tomograms_star, read_optimisation_set,
+                          read_trajectories_star, is_relion_tomo_star,
+                          tomo_star_to_tilt_particles, relion_angles_to_matrix,
+                          matrix_to_relion_angles, projection_matrix_from_angles,
+                          build_deformation, Linear2DDeformation, Spline2DDeformation,
+                          Fourier2DDeformation)
+from .warp_tomo import is_warp_tilt_series_star, warp_star_to_tilt_particles

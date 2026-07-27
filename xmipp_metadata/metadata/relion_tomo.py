@@ -554,8 +554,10 @@ class TiltSeriesGeometry:
 def _read_star(path):
     """
     starfile.read that always yields a dict of DataFrames.  Loop-less blocks --
-    ``data_optimisation_set`` is one -- come back as a Series, so they are promoted
-    to a single-row frame rather than silently dropped.
+    ``data_optimisation_set`` is one -- come back as a plain ``dict`` (starfile
+    >= 0.5) or a ``Series`` (older releases), so both are promoted to a single-row
+    frame rather than silently dropped.  Dropping them would lose the optimisation
+    set entirely, which is the one block that names every other file.
     """
     out = starfile.read(path, always_dict=True)
     blocks = {}
@@ -564,7 +566,23 @@ def _read_star(path):
             blocks[key] = value
         elif isinstance(value, pd.Series):
             blocks[key] = value.to_frame().T
+        elif isinstance(value, dict):
+            blocks[key] = pd.DataFrame([value])
     return blocks
+
+
+# The labels that identify an optimisation set. RELION names the block
+# ``optimisation_set``, but a hand-written or re-exported file may leave it
+# unnamed, so the labels -- not the block name -- are what we key on.
+_OPTIMISATION_SET_LABEL = "rlnTomoParticlesFile"
+
+
+def _optimisation_block(blocks):
+    """The optimisation-set block of a parsed STAR file, or None."""
+    for df in blocks.values():
+        if _OPTIMISATION_SET_LABEL in df.columns:
+            return df
+    return None
 
 
 def _col(df, name, default=None, dtype=np.float64):
@@ -682,7 +700,11 @@ def read_optimisation_set(path):
                   'manifolds', 'reference_map' (missing entries are None)
     """
     blocks = _read_star(path)
-    df = blocks.get("optimisation_set", next(iter(blocks.values())))
+    df = _optimisation_block(blocks)
+    if df is None:
+        raise ValueError(
+            f"{path} has no block with {_OPTIMISATION_SET_LABEL}; is it a RELION "
+            f"optimisation set?")
     row = df.iloc[0]
     base = os.path.dirname(os.path.abspath(path))
 
@@ -970,6 +992,9 @@ def is_relion_tomo_star(blocks):
         if not isinstance(df, pd.DataFrame):
             continue
         cols = set(df.columns)
+        # an optimisation set is not a particles table itself, but it names one
+        if _OPTIMISATION_SET_LABEL in cols:
+            return True
         if "rlnTomoName" in cols and (
                 {"rlnCenteredCoordinateXAngst", "rlnCenteredCoordinateZAngst"} & cols
                 or "rlnCoordinateZ" in cols):
@@ -1080,7 +1105,7 @@ def tomo_star_to_tilt_particles(
     blocks = _read_star(particles_star)
 
     # An optimisation set points at the real files
-    if "optimisation_set" in blocks:
+    if _optimisation_block(blocks) is not None:
         opt = read_optimisation_set(particles_star)
         if opt["particles"] is None:
             raise ValueError(f"{particles_star} has no rlnTomoParticlesFile")

@@ -42,6 +42,7 @@ import pandas as pd
 import pytest
 import starfile
 
+from xmipp_metadata.metadata import XmippMetaData
 from xmipp_metadata.metadata.relion_tomo import (
     relion_angles_to_matrix,
     matrix_to_relion_angles,
@@ -49,6 +50,9 @@ from xmipp_metadata.metadata.relion_tomo import (
     read_tomograms_star,
     read_trajectories_star,
     tomo_star_to_tilt_particles,
+    read_optimisation_set,
+    is_relion_tomo_star,
+    _read_star,
     Linear2DDeformation,
     Spline2DDeformation,
     Fourier2DDeformation,
@@ -938,3 +942,96 @@ def test_visibility_is_honoured(tomo_project, tmp_path):
     assert list(rows["rlnTomoFrameIndex"]) == [2, 3, 5, 6, 7, 8, 9, 10, 11]
     assert [s.split("@")[0] for s in rows["rlnImageName"]] == \
            [str(i + 1) for i in range(F - 2)]
+
+
+# --------------------------------------------------------------------------- #
+#  Optimisation sets
+# --------------------------------------------------------------------------- #
+
+def _write_optimisation_set(path, block_name, particles, tomograms, extra=None):
+    """
+    Write a RELION optimisation set by hand.
+
+    It is written as text rather than through ``starfile.write`` so the block name
+    can be controlled exactly -- the point of these tests is that a loop-less block
+    must be found by its labels, not by what the block happens to be called.
+    """
+    rows = {"rlnTomoParticlesFile": str(particles),
+            "rlnTomoTomogramsFile": str(tomograms)}
+    rows.update(extra or {})
+    lines = ["# version 50001", "", f"data_{block_name}", ""]
+    lines += [f"_{k}{' ' * 8}{v}" for k, v in rows.items()]
+    path.write_text("\n".join(lines) + "\n")
+    return path
+
+
+@pytest.mark.parametrize("block_name", ["optimisation_set", ""])
+def test_optimisation_set_resolves_its_files(tomo_project, tmp_path, block_name):
+    """
+    starfile hands a loop-less block back as a plain dict, not a frame. If that is
+    dropped the optimisation set vanishes and the file reads as an ordinary
+    single-particle STAR, which is silently wrong rather than an error.
+    """
+    opt = _write_optimisation_set(
+        tmp_path / "run_optimisation_set.star", block_name,
+        tomo_project["particles"], tomo_project["tomograms"])
+
+    resolved = read_optimisation_set(opt)
+    assert resolved["particles"] == str(tomo_project["particles"])
+    assert resolved["tomograms"] == str(tomo_project["tomograms"])
+    assert resolved["trajectories"] is None
+
+    assert is_relion_tomo_star(_read_star(opt))
+
+
+@pytest.mark.parametrize("block_name", ["optimisation_set", ""])
+def test_expansion_through_an_optimisation_set(tomo_project, tmp_path, block_name):
+    """Going in through the optimisation set must give the same table as going direct."""
+    opt = _write_optimisation_set(
+        tmp_path / "run_optimisation_set.star", block_name,
+        tomo_project["particles"], tomo_project["tomograms"])
+
+    kwargs = dict(tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    direct = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"], **kwargs)
+    # the tomograms STAR is deliberately not passed: it has to come from the set
+    through = tomo_star_to_tilt_particles(opt, **kwargs)
+
+    pd.testing.assert_frame_equal(direct, through)
+
+
+def test_optimisation_set_reaches_xmipp_metadata(tomo_project, tmp_path):
+    """The header sniff must route an optimisation set to the tomo expansion."""
+    opt = _write_optimisation_set(
+        tmp_path / "run_optimisation_set.star", "optimisation_set",
+        tomo_project["particles"], tomo_project["tomograms"])
+
+    assert XmippMetaData._sniffTomoKind(str(opt)) == "relion"
+    assert XmippMetaData._sniffTomoKind(str(tomo_project["particles"])) == "relion"
+
+    md = XmippMetaData(str(opt))
+    assert md.isTomo and md.tomoFormat == "relion"
+    assert len(md) == tomo_project["n"] * tomo_project["n_frames"]
+    subtomo = md.getMetaDataColumns("subtomo_labels").astype(int)
+    assert np.array_equal(np.unique(subtomo), np.arange(1, tomo_project["n"] + 1))
+
+
+def test_a_file_that_is_not_an_optimisation_set_is_rejected(tomo_project):
+    with pytest.raises(ValueError, match="rlnTomoParticlesFile"):
+        read_optimisation_set(tomo_project["tomograms"])
+
+
+def test_loop_less_blocks_survive_a_plain_star_read(tmp_path):
+    """
+    A non-tomography STAR with a loop-less block used to crash the label converter
+    with AttributeError: 'dict' object has no attribute 'columns'.
+    """
+    path = tmp_path / "mixed.star"
+    parts = pd.DataFrame({"rlnImageName": ["1@a.mrcs", "2@a.mrcs"],
+                          "rlnAngleRot": [10.0, 20.0]})
+    starfile.write({"general": pd.Series({"rlnNrParticles": 2}),
+                    "particles": parts}, path, overwrite=True)
+
+    md = XmippMetaData(str(path))
+    assert not md.isTomo
+    assert len(md) == 2

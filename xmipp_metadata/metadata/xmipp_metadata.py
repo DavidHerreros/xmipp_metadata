@@ -328,6 +328,12 @@ class XmippMetaData(object):
         except OSError:
             return None
 
+        # An optimisation set names the particles file rather than holding it. The
+        # block name alone is not enough to spot one: RELION writes
+        # ``data_optimisation_set``, but a re-exported file may leave the block
+        # unnamed, and then the label is the only marker left.
+        if "_rlnTomoParticlesFile" in labels:
+            return "relion"
         if "_rlnTomoName" in labels and (
                 "_rlnCenteredCoordinateZAngst" in labels or "_rlnCoordinateZ" in labels):
             return "relion"

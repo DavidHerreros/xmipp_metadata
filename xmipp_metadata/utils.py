@@ -197,6 +197,28 @@ def emtable_2_pandas(file_name):
     return pd.concat(pd_table, ignore_index=True)
 
 
+def _table_labels(block) -> set:
+    """The label names of one parsed STAR block, whatever shape the reader used."""
+    if isinstance(block, pd.DataFrame):
+        return set(block.columns)
+    if isinstance(block, pd.Series):
+        return set(block.index)
+    if isinstance(block, dict):
+        return set(block.keys())
+    return set()
+
+
+def _as_dataframe(block) -> pd.DataFrame:
+    """Promote a loop-less STAR block to the one-row frame the rest of the code wants."""
+    if isinstance(block, pd.DataFrame):
+        return block
+    if isinstance(block, pd.Series):
+        return block.to_frame().T
+    if isinstance(block, dict):
+        return pd.DataFrame([block])
+    return pd.DataFrame(block)
+
+
 def _choose_particles_table(star_obj: Dict[str, pd.DataFrame]) -> str:
     """
     Heuristic to pick the particles-like table from a starfile.read() dict.
@@ -212,7 +234,9 @@ def _choose_particles_table(star_obj: Dict[str, pd.DataFrame]) -> str:
     best_score = -1
     wanted = {"rlnImageName", "rlnMicrographName", "rlnCoordinateX", "rlnCoordinateY"}
     for k, df in star_obj.items():
-        score = len(wanted.intersection(set(df.columns)))
+        # starfile hands loop-less blocks back as a plain dict (or, on older
+        # releases, a Series); either way they carry labels but no .columns
+        score = len(wanted.intersection(_table_labels(df)))
         if score > best_score:
             best_key = k
             best_score = score
@@ -273,7 +297,7 @@ def relion_df_to_xmipp_labels(
     if isinstance(star_obj, dict):
         if table is None:
             table = _choose_particles_table(star_obj)
-        df = star_obj[table].copy()
+        df = _as_dataframe(star_obj[table]).copy()
 
         # Optionally merge optics into particles
         if merge_optics:
@@ -284,7 +308,8 @@ def relion_df_to_xmipp_labels(
                     optics_key = k
                     break
             if optics_key is not None and optics_key != table:
-                df = _merge_optics_into_particles(df, star_obj[optics_key])
+                df = _merge_optics_into_particles(
+                    df, _as_dataframe(star_obj[optics_key]))
     else:
         df = star_obj.copy()
 

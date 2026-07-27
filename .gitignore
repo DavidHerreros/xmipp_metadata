@@ -12,3 +12,8 @@ build
 
 # Test outputs
 xmipp_metadata/tests/data/test_outputs*
+
+# Reconstructions and image stacks: test runs drop these into tests/data, and they are
+# binaries that do not belong in the history
+*.mrc
+*.mrcs

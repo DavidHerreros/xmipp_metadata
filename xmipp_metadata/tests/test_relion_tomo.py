@@ -1192,3 +1192,25 @@ def test_write_rebases_project_relative_paths(relion_project_layout, monkeypatch
     again = XmippMetaData(str(out))
     assert again.binaries, "the rewritten paths do not resolve from the new location"
     assert again.getMetaDataImage(0).shape[-1] == 64
+
+
+def test_data_general_block_does_not_derail_the_read(tomo_project, tmp_path):
+    """
+    RELION-5's Extract writes a loop-less ``data_general`` block carrying
+    ``rlnTomoSubTomosAre2DStacks``. It has to be read past, not tripped over -- and it is
+    written by hand here because starfile 0.5.13 silently drops a loop-less block on
+    write, so a fixture built with starfile alone would not test anything.
+    """
+    parts = starfile.read(tomo_project["particles"], always_dict=True)
+    path = tmp_path / "particles_general.star"
+    starfile.write(parts, path, overwrite=True)
+    path.write_text("# version 50001\n\ndata_general\n\n"
+                    "_rlnTomoSubTomosAre2DStacks            1\n\n\n" + path.read_text())
+
+    reference = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    got = tomo_star_to_tilt_particles(
+        path, tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    pd.testing.assert_frame_equal(reference, got)

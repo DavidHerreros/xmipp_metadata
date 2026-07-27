@@ -343,6 +343,24 @@ def _matrix_to_relion_angles(A):
     return float(rot), float(tilt), float(psi)
 
 
+def _prepend_general(path, rows):
+    """Insert a loop-less ``data_general`` block at the top of a written STAR file.
+
+    Hand-written because starfile 0.5.13 silently *drops* a loop-less block on write
+    (a Series passed to ``starfile.write`` simply does not appear in the output), and
+    this particular block is not decoration: RELION reads
+    ``rlnTomoSubTomosAre2DStacks`` from it and refuses to reconstruct when it is set,
+    which is the whole reason a data set has to carry it to be faithful.
+    """
+    with open(path) as fh:
+        body = fh.read()
+    head = ["# version 50001", "", "data_general", ""]
+    head += [f"_{k}{' ' * 12}{v}" for k, v in rows.items()]
+    head += ["", ""]
+    with open(path, "w") as fh:
+        fh.write("\n".join(head) + body)
+
+
 def _vec(v):
     return "[" + ",".join(f"{x:.6f}" for x in np.asarray(v).ravel()) + "]"
 
@@ -452,6 +470,11 @@ def write_relion(d, out):
     parts_rel = "Extract/job002/particles.star"
     starfile.write({"optics": optics, "particles": parts},
                    os.path.join(out, parts_rel), overwrite=True)
+    # RELION-5's Extract writes this, and relion_reconstruct refuses the file when it is
+    # set ("reconstruct does not yet work with 2D subtomogram stacks"). Emitting it is the
+    # difference between a data set that looks like RELION's and one that behaves like it.
+    _prepend_general(os.path.join(out, parts_rel),
+                     {"rlnTomoSubTomosAre2DStacks": 1})
 
     opt = ["# version 50001", "", "data_optimisation_set", "",
            f"_rlnTomoParticlesFile        {parts_rel}",

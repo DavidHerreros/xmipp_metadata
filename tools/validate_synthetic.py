@@ -212,22 +212,27 @@ def main():
     v2 = reconstruct(images, conv_ang, conv_sh, weights, box, premult)
     r2 = report("converted poses", v2, truth)
 
-    print(f"\n  agreement between the two              "
-          f"median FSC {float(np.median(fsc(v1, v2)[1:box // 2])):.4f}")
+    agree = float(np.median(fsc(v1, v2)[1:box // 2]))
+    print(f"\n  agreement between the two              median FSC {agree:.4f}")
 
     print()
-    # The primary criterion is stage1 vs stage2, not either against the phantom: the
-    # renderer and the reconstructor lose a little to interpolation and to the Wiener
-    # floor no matter what, so agreeing with the phantom to 0.95 is as good as it gets,
-    # whereas the two pose sets describe the same images and must agree exactly.
-    if r1[2] < 0.9:
-        print("STAGE 1 FAILED: the test itself is wrong, ignore stage 2")
-    elif r2[2] > 0.9:
-        print("PASS: the converter's poses reproduce the phantom")
-    elif r2[1] > r2[0] + 0.1:
-        print("FAIL: the map is MIRRORED -- handedness / tilt sign")
+    # The verdict keys on stage1-vs-stage2, not on either against the phantom. The two
+    # pose sets describe the same images and must agree exactly; agreeing with the
+    # phantom is bounded by interpolation, the Wiener floor and how much of Fourier
+    # space this many particles actually cover, none of which is a convention question.
+    if agree < 0.99:
+        print(f"FAIL: the converter's poses differ from the ones the images were "
+              f"rendered with (agreement {agree:.4f})")
+        if r2[1] > r2[0] + 0.1:
+            print("      the map is MIRRORED -- handedness / tilt sign")
+    elif r1[2] < 0.8:
+        print(f"INCONCLUSIVE: the converter agrees with the renderer, but the renderer "
+              f"itself only reaches {r1[2]:.3f} against the phantom.")
+        print("      Use more particles or more tilts before trusting this.")
     else:
-        print("FAIL: the converter's poses do not reproduce the phantom")
+        print(f"PASS: the converter's poses are the ones the images were rendered with "
+              f"(agreement {agree:.4f}),")
+        print(f"      and those poses reproduce the phantom (median FSC {r1[2]:.3f}).")
 
 
 if __name__ == "__main__":

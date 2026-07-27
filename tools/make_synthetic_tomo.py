@@ -421,6 +421,10 @@ def write_relion(d, out):
         "rlnTomoSizeX": d["W"], "rlnTomoSizeY": d["H"], "rlnTomoSizeZ": d["args"].tomo_z,
         "rlnTomoTiltSeriesStarFile": ts_rel,
         "rlnTomoTiltSeriesName": tilt_rel if tilt_rel else "tilt_series/TS_01.mrcs",
+        # Mandatory as soon as rlnTomoTiltSeriesName is present: TomogramSet reads it
+        # with getValueSafely right after the name (tomogram_set.cpp:193-197), so
+        # omitting it fails with "Label rlnTomoFrameCount not present in global".
+        "rlnTomoFrameCount": F,
         "rlnOpticsGroupName": "opticsGroup1",
         "rlnTomoImportFractionalDose": d["args"].dose_per_tilt,
     }])

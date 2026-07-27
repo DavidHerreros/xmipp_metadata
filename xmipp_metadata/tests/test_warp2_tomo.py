@@ -71,7 +71,8 @@ def _vec(values):
 
 
 def _write_project(tmp_path, tomo_names=("TS_01.tomostar", "TS_02.tomostar"),
-                   block_names=None, stem="matching_4apx", rotation_only=True):
+                   block_names=None, stem="matching_4apx", rotation_only=True,
+                   refined_origins=False):
     rng = np.random.default_rng(42)
 
     global_rows, blocks, projections = [], {}, {}
@@ -139,9 +140,11 @@ def _write_project(tmp_path, tomo_names=("TS_01.tomostar", "TS_02.tomostar"),
                 "rlnTomoParticleName": f"{root}/{p + 1}",
                 "rlnOpticsGroup": root,                     # a string, as Warp writes
                 "rlnImageName": f"particleseries/{root}_{p + 1:06d}.mrcs",
-                "rlnOriginXAngst": 0.0,
-                "rlnOriginYAngst": 0.0,
-                "rlnOriginZAngst": 0.0,
+                # WarpTools writes these as a hard 0.0; a refinement run on top of the
+                # exported stacks is what makes them non-zero
+                "rlnOriginXAngst": rng.uniform(-12, 12) if refined_origins else 0.0,
+                "rlnOriginYAngst": rng.uniform(-12, 12) if refined_origins else 0.0,
+                "rlnOriginZAngst": rng.uniform(-12, 12) if refined_origins else 0.0,
                 "rlnTomoVisibleFrames": _vec(np.ones(N_TILTS)).replace(".000000", ""),
             })
 
@@ -319,6 +322,63 @@ def test_full_matrices_do_not_trigger_the_guard(tmp_path):
     df = tomo_star_to_tilt_particles(project["particles"], project["tomograms"],
                                      shifts="residual")
     assert len(df) == 2 * N_PARTICLES * N_TILTS
+
+
+def test_refined_origins_on_warp_geometry(tmp_path):
+    """
+    The real downstream case: RELION refines on top of Warp's exported 2D stacks, so the
+    origins become non-zero while the geometry stays rotation-only. shifts='from_origin'
+    must work there -- and the default must not silently throw the refinement away.
+    """
+    project = _write_project(tmp_path, refined_origins=True)
+
+    # the default would discard the refinement, and has to say so
+    with pytest.warns(RuntimeWarning, match="shifts='from_origin'"):
+        dropped = tomo_star_to_tilt_particles(project["particles"], project["tomograms"])
+    assert np.allclose(dropped["rlnOriginXAngst"], 0.0)
+
+    # 'residual' is still refused: it needs absolute positions this geometry cannot give
+    with pytest.raises(ValueError, match="zero translation column"):
+        tomo_star_to_tilt_particles(project["particles"], project["tomograms"],
+                                    shifts="residual")
+
+    # 'from_origin' works, because it only ever projects a difference
+    kept = tomo_star_to_tilt_particles(project["particles"], project["tomograms"],
+                                       shifts="from_origin")
+    assert np.abs(kept["rlnOriginXAngst"]).max() > 1e-3
+    assert np.abs(kept["rlnOriginYAngst"]).max() > 1e-3
+
+    # and it agrees with a direct projection of the refined 3D offset
+    geoms = read_tomograms_star(project["tomograms"])
+    parts = starfile.read(project["particles"], always_dict=True)["particles"]
+    for name, geom in geoms.items():
+        sub = parts[parts["rlnTomoName"] == name].reset_index(drop=True)
+        offset = np.stack([sub["rlnOriginXAngst"].to_numpy(),
+                           sub["rlnOriginYAngst"].to_numpy(),
+                           sub["rlnOriginZAngst"].to_numpy()], axis=-1)
+        delta = -offset / APIX
+        want = -np.einsum('fij,nj->nfi', geom.projection[:, :3, :3], delta)[..., :2] * APIX
+        rows = kept[kept["rlnTomoName"] == name]
+        assert np.allclose(rows["rlnOriginXAngst"].to_numpy(), want[..., 0].ravel(),
+                           atol=1e-9)
+        assert np.allclose(rows["rlnOriginYAngst"].to_numpy(), want[..., 1].ravel(),
+                           atol=1e-9)
+
+    # the poses are untouched by the shift mode
+    for col in ("rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi"):
+        assert np.allclose(dropped[col].to_numpy(), kept[col].to_numpy(), atol=1e-12)
+
+
+def test_from_origin_reaches_xmipp_metadata(tmp_path):
+    """The mode has to be reachable through the XmippMetaData entry point too."""
+    from xmipp_metadata.metadata import XmippMetaData
+
+    project = _write_project(tmp_path, refined_origins=True)
+    md = XmippMetaData(str(project["particles"]),
+                       tomo_kwargs={"shifts": "from_origin"})
+    assert md.isTomo and md.tomoFormat == "relion"
+    # shift_units defaults to "pixel" on this path, so shiftX is in output pixels
+    assert np.abs(md.getMetaDataColumns("shiftX")).max() > 1e-4
 
 
 def test_missing_tomograms_star_gives_a_clear_error(tmp_path):

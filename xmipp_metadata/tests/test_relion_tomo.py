@@ -330,7 +330,7 @@ def test_origin_shift_is_subtracted_from_the_coordinate():
         "rlnTomoSubtomogramTilt": [35.0],
         "rlnTomoSubtomogramPsi": [-50.0],
     })
-    pos, _ = _particle_positions(df, geom)
+    pos, _, _ = _particle_positions(df, geom)
     assert np.allclose(pos[0], want, atol=1e-9)
 
 
@@ -554,7 +554,7 @@ def test_defocus_gradient_follows_depth(tomo_project):
 
     geom = geoms["ts_001"]
     sub = parts[parts["rlnTomoName"] == "ts_001"].reset_index(drop=True)
-    pos, _ = _particle_positions(sub, geom)
+    pos, _, _ = _particle_positions(sub, geom)
     projected = geom.project(pos)
 
     rows = df[df["subtomo_labels"] == 1].sort_values("rlnTomoFrameIndex")
@@ -590,7 +590,7 @@ def test_shift_modes(tomo_project):
     parts = starfile.read(tomo_project["particles"], always_dict=True)["particles"]
     for name, geom in geoms.items():
         sub = parts[parts["rlnTomoName"] == name].reset_index(drop=True)
-        pos, _ = _particle_positions(sub, geom)
+        pos, _, _ = _particle_positions(sub, geom)
         centre = geom.project(pos)[..., :2]                       # (n, F, 2)
         rows = residual[residual["rlnTomoName"] == name]
         got_x = (rows["rlnCoordinateX"].to_numpy()
@@ -712,7 +712,7 @@ def test_deformation_moves_the_crop_but_not_the_pose(tomo_project, tmp_path):
 
     parts = starfile.read(tomo_project["particles"], always_dict=True)["particles"]
     sub = parts[parts["rlnTomoName"] == "ts_001"].reset_index(drop=True)
-    pos, _ = _particle_positions(sub, geom)
+    pos, _, _ = _particle_positions(sub, geom)
     undeformed = (np.einsum('ij,nj->ni', geom.projection[0, :3, :3], pos)
                   + geom.projection[0, :3, 3])
     assert np.allclose(geom.project(pos)[:, 0, :2], model.apply(undeformed[:, :2]),
@@ -759,7 +759,7 @@ def test_trajectories_shift_the_crop_centre(tomo_project, tmp_path):
     geom = read_tomograms_star(tomo_project["tomograms"],
                                tilt_image_size=(W, H))["ts_001"]
     sub = parts[parts["rlnTomoName"] == "ts_001"].reset_index(drop=True)
-    pos, _ = _particle_positions(sub, geom)
+    pos, _, _ = _particle_positions(sub, geom)
     traj = np.stack([shifts[nm] for nm in sub["rlnTomoParticleName"]]) / apix
     want = geom.project(pos[:, None, :] + traj)
     rows = moved[moved["rlnTomoName"] == "ts_001"]
@@ -778,6 +778,143 @@ def test_trajectories_need_particle_names(tomo_project, tmp_path):
             path, tomo_project["tomograms"],
             tilt_image_size=(tomo_project["w0"], tomo_project["h0"]),
             trajectories={"a": np.zeros((tomo_project["n_frames"], 3))})
+
+
+def _write_tomograms_with_matrices(tmp_path, tomo_project, name, zero_translation):
+    """Rewrite the fixture's geometry as explicit rlnTomoProj* matrices."""
+    geoms = read_tomograms_star(tomo_project["tomograms"],
+                                tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    g = starfile.read(tomo_project["tomograms"], always_dict=True)["global"].copy()
+    blocks = {}
+    for i in range(len(g)):
+        tomo = g["rlnTomoName"][i]
+        proj = np.array(geoms[tomo].projection, copy=True)
+        if zero_translation:
+            proj[:, :3, 3] = 0.0
+        ts = starfile.read(g["rlnTomoTiltSeriesStarFile"][i], always_dict=True)[tomo].copy()
+        for row, label in enumerate(("rlnTomoProjX", "rlnTomoProjY",
+                                     "rlnTomoProjZ", "rlnTomoProjW")):
+            ts[label] = ["[" + ",".join(f"{v:.10f}" for v in proj[f, row]) + "]"
+                         for f in range(proj.shape[0])]
+        blocks[tomo] = ts
+    g = g.drop(columns=["rlnTomoTiltSeriesStarFile"])
+    path = tmp_path / name
+    starfile.write({"global": g, **blocks}, path, overwrite=True)
+    return path
+
+
+def test_from_origin_matches_a_direct_projection(tomo_project):
+    """
+    The refined 3D origin, projected onto each tilt. Checked against a direct
+    computation rather than against the converter's own intermediates.
+    """
+    W, H = tomo_project["w0"], tomo_project["h0"]
+    apix = tomo_project["apix"]
+    df = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        shifts="from_origin", tilt_image_size=(W, H))
+
+    geoms = read_tomograms_star(tomo_project["tomograms"], tilt_image_size=(W, H))
+    parts = starfile.read(tomo_project["particles"], always_dict=True)["particles"]
+
+    for name, geom in geoms.items():
+        sub = parts[parts["rlnTomoName"] == name].reset_index(drop=True)
+        offset = np.stack([sub["rlnOriginXAngst"].to_numpy(),
+                           sub["rlnOriginYAngst"].to_numpy(),
+                           sub["rlnOriginZAngst"].to_numpy()], axis=-1)
+        # the fixture has no rlnTomoSubtomogram* angles, so A_sub is the identity
+        delta = -offset / apix
+        delta_2d = np.einsum('fij,nj->nfi', geom.projection[:, :3, :3], delta)[..., :2]
+        want = -delta_2d * apix
+
+        rows = df[df["rlnTomoName"] == name]
+        assert np.allclose(rows["rlnOriginXAngst"].to_numpy(), want[..., 0].ravel(),
+                           atol=1e-9)
+        assert np.allclose(rows["rlnOriginYAngst"].to_numpy(), want[..., 1].ravel(),
+                           atol=1e-9)
+
+    # a real refinement moves the particle, so this must not be a no-op
+    assert np.abs(df["rlnOriginXAngst"]).max() > 1e-3
+
+
+def test_from_origin_is_immune_to_a_missing_translation(tomo_project, tmp_path):
+    """
+    The justification for the whole mode: it projects a *difference* of positions, so the
+    translation column cancels and WarpTools' rotation-only matrices give the same answer.
+    """
+    W, H = tomo_project["w0"], tomo_project["h0"]
+    full = _write_tomograms_with_matrices(tmp_path, tomo_project, "tg_full.star", False)
+    rot_only = _write_tomograms_with_matrices(tmp_path, tomo_project, "tg_rot.star", True)
+
+    assert not read_tomograms_star(full)["ts_001"].is_rotation_only
+    assert read_tomograms_star(rot_only)["ts_001"].is_rotation_only
+
+    a = tomo_star_to_tilt_particles(tomo_project["particles"], full,
+                                    shifts="from_origin", tilt_image_size=(W, H))
+    b = tomo_star_to_tilt_particles(tomo_project["particles"], rot_only,
+                                    shifts="from_origin", tilt_image_size=(W, H))
+
+    for col in ("rlnOriginXAngst", "rlnOriginYAngst",
+                "rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi", "rlnDefocusU"):
+        assert np.allclose(a[col].to_numpy(), b[col].to_numpy(), atol=1e-9), col
+
+    # ...whereas the absolute crop coordinate is exactly what does NOT survive
+    assert not np.allclose(a["rlnCoordinateX"].to_numpy(),
+                           b["rlnCoordinateX"].to_numpy())
+
+
+def test_from_origin_recovers_the_refined_centre(tomo_project):
+    """coordinate - origin/apix must land on the projection of the *refined* position."""
+    W, H = tomo_project["w0"], tomo_project["h0"]
+    apix = tomo_project["apix"]
+    df = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        shifts="from_origin", tilt_image_size=(W, H))
+
+    from xmipp_metadata.metadata.relion_tomo import _particle_positions
+
+    geoms = read_tomograms_star(tomo_project["tomograms"], tilt_image_size=(W, H))
+    parts = starfile.read(tomo_project["particles"], always_dict=True)["particles"]
+
+    for name, geom in geoms.items():
+        sub = parts[parts["rlnTomoName"] == name].reset_index(drop=True)
+        pos, _, delta = _particle_positions(sub, geom)
+        refined = geom.project(pos)[..., :2]              # where the particle really is
+        extraction = geom.project(pos - delta)[..., :2]   # where the box was cut
+
+        rows = df[df["rlnTomoName"] == name]
+        got = (np.stack([rows["rlnCoordinateX"].to_numpy(),
+                         rows["rlnCoordinateY"].to_numpy()], axis=-1)
+               - np.stack([rows["rlnOriginXAngst"].to_numpy(),
+                           rows["rlnOriginYAngst"].to_numpy()], axis=-1) / apix)
+        # RELION's relation must hold exactly: coordinate - origin is the refined centre
+        assert np.allclose(got, refined.reshape(-1, 2), atol=1e-9)
+        # ...and the coordinate itself is the centre the box was actually cut at
+        assert np.allclose(
+            np.stack([rows["rlnCoordinateX"].to_numpy(),
+                      rows["rlnCoordinateY"].to_numpy()], axis=-1),
+            extraction.reshape(-1, 2), atol=1e-9)
+
+
+def test_from_origin_is_a_no_op_without_origins(tomo_project, tmp_path):
+    blocks = starfile.read(tomo_project["particles"], always_dict=True)
+    for c in ("rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"):
+        blocks["particles"][c] = 0.0
+    path = tmp_path / "particles_nozero.star"
+    starfile.write(blocks, path, overwrite=True)
+
+    df = tomo_star_to_tilt_particles(
+        path, tomo_project["tomograms"], shifts="from_origin",
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    assert np.allclose(df["rlnOriginXAngst"], 0.0)
+    assert np.allclose(df["rlnOriginYAngst"], 0.0)
+
+
+def test_dropping_refined_origins_is_flagged(tomo_project):
+    with pytest.warns(RuntimeWarning, match="shifts='from_origin'"):
+        tomo_star_to_tilt_particles(
+            tomo_project["particles"], tomo_project["tomograms"],
+            tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
 
 
 def test_visibility_is_honoured(tomo_project, tmp_path):

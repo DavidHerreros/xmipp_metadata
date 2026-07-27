@@ -947,8 +947,11 @@ def _particle_positions(df, geom):
     else:
         A_sub = np.broadcast_to(np.eye(3), (n, 3, 3))
 
-    pos = pos - np.einsum('nij,nj->ni', A_sub, offset) / apix
-    return pos, A_sub
+    # ``delta`` is the displacement the origin shift applies to the coordinate, kept
+    # separately because it is what the "from_origin" shift mode projects: being a
+    # *difference* of positions, it survives a projection matrix with no translation.
+    delta = -np.einsum('nij,nj->ni', A_sub, offset) / apix
+    return pos + delta, A_sub, delta
 
 
 def is_relion_tomo_star(blocks):
@@ -1014,12 +1017,24 @@ def tomo_star_to_tilt_particles(
 
     ``shifts`` controls which of those two situations is assumed:
 
-      * ``"zero"``       -- the images are already centred (RELION 2D stacks).
-      * ``"residual"``   -- the images will be cropped at the integer pixel given
-                            by ``rlnCoordinateX/Y``, so the sub-pixel remainder is
-                            written to ``rlnOriginX/YAngst``.
-      * ``"auto"``       -- ``"zero"`` when the input carries ``rlnTomoVisibleFrames``
-                            (RELION wrote 2D stacks), ``"residual"`` otherwise.
+      * ``"zero"``        -- the images are already centred (RELION 2D stacks).
+      * ``"residual"``    -- the images will be cropped at the integer pixel given
+                             by ``rlnCoordinateX/Y``, so the sub-pixel remainder is
+                             written to ``rlnOriginX/YAngst``.
+      * ``"from_origin"`` -- the images were extracted centred on ``rlnCoordinateX/Y/Z``
+                             and ``rlnOriginX/Y/ZAngst`` is a 3D correction refined
+                             *since* that extraction. Its per-tilt 2D effect is written
+                             out. This is what a refinement run on top of already-extracted
+                             2D stacks produces, and dropping it would discard the whole
+                             translational part of that refinement. It stays exact on
+                             rotation-only projection matrices, because projecting a
+                             *difference* of positions cancels the missing translation.
+      * ``"auto"``        -- ``"zero"`` when the input carries ``rlnTomoVisibleFrames``
+                             (2D stacks were written), ``"residual"`` otherwise. Note
+                             ``auto`` never selects ``from_origin``: whether an origin is
+                             a correction *since* extraction or was already folded into
+                             the extraction cannot be told from the file, so it has to be
+                             asked for. A warning is raised when the choice looks wrong.
 
     Sign convention for the residual follows RELION everywhere: the true particle
     centre is ``coordinate - origin``, exactly as in ``ParticleSet::getPosition``.
@@ -1053,8 +1068,9 @@ def tomo_star_to_tilt_particles(
         :returns: pandas DataFrame with RELION labels, one row per tilt image, plus a
                   dense 1-based ``subtomo_labels`` column grouping rows by particle
     """
-    if shifts not in ("auto", "zero", "residual"):
-        raise ValueError(f"shifts must be auto/zero/residual, got {shifts!r}")
+    if shifts not in ("auto", "zero", "residual", "from_origin"):
+        raise ValueError(
+            f"shifts must be auto/zero/residual/from_origin, got {shifts!r}")
     if shift_units not in ("angstrom", "pixel"):
         raise ValueError(f"shift_units must be angstrom/pixel, got {shift_units!r}")
     if visibility not in ("auto", "stored", "computed"):
@@ -1144,8 +1160,27 @@ def tomo_star_to_tilt_particles(
         box_size = float(np.median(parts["rlnImageSize"].to_numpy())) * binning
 
     has_stack2d = "rlnTomoVisibleFrames" in parts.columns
+    requested_shifts = shifts
     if shifts == "auto":
         shifts = "zero" if has_stack2d else "residual"
+
+    # Dropping a refined origin is silent and expensive -- the map just comes out worse --
+    # so say so loudly when the input looks like a refinement on top of extracted stacks.
+    if shifts == "zero":
+        origin_cols = [c for c in ("rlnOriginXAngst", "rlnOriginYAngst",
+                                   "rlnOriginZAngst") if c in parts.columns]
+        if origin_cols:
+            largest = float(np.abs(parts[origin_cols].to_numpy(dtype=np.float64)).max())
+            if largest > 1e-6:
+                how = ("auto-selected" if requested_shifts == "auto" else "requested")
+                warnings.warn(
+                    f"shifts='zero' ({how}) but the particles carry non-zero origin "
+                    f"shifts (up to {largest:.3g} A). If those were refined *after* the "
+                    f"2D stacks were extracted -- which is what a refinement run on "
+                    f"extracted stacks produces -- they are being discarded, and the "
+                    f"whole translational part of that refinement with them. Pass "
+                    f"shifts='from_origin' to project them onto each tilt instead.",
+                    RuntimeWarning)
     if visibility == "auto":
         visibility = "stored" if has_stack2d else "computed"
     if visibility == "stored" and not has_stack2d:
@@ -1212,7 +1247,7 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
     apix_ts = geom.pixel_size
     apix_out = apix_ts * binning
 
-    pos, A_sub = _particle_positions(df, geom)
+    pos, A_sub, delta = _particle_positions(df, geom)
 
     # ---- optional per-tilt particle motion -------------------------------- #
     traj = None
@@ -1268,6 +1303,22 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
     coord_int = np.rint(centre_px)
     if shifts == "zero":
         origin_angst = np.zeros_like(centre_px)
+    elif shifts == "from_origin":
+        # The images were extracted centred on rlnCoordinateX/Y/Z; rlnOriginX/Y/ZAngst is
+        # the 3D correction refined *since*. Its per-tilt 2D effect is the projection of
+        # that displacement -- and because this is a difference of two positions, the
+        # translation column of the projection matrix cancels, so it stays exact on the
+        # rotation-only matrices WarpTools writes.
+        delta_2d = np.einsum('fij,nj->nfi', geom.projection[:, :3, :3], delta)[..., :2]
+        # RELION: true centre = coordinate - origin, and the refined centre sits at
+        # (extraction centre + delta_2d), so origin = -delta_2d
+        origin_angst = -delta_2d * apix_ts
+        # The crop already happened, at the extraction centre, and nothing here is
+        # instructing a new one -- so report that centre unrounded rather than rounding it
+        # as the "residual" mode does. Rounding would have to be folded into the origin,
+        # which would stop it being a pure difference and so stop it working on a
+        # rotation-only geometry, which is the whole point of this mode.
+        coord_int = centre_px - delta_2d
     else:
         # RELION: true centre = coordinate - origin  =>  origin = coordinate - centre
         origin_angst = (coord_int - centre_px) * apix_ts

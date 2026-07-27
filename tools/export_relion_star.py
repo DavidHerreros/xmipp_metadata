@@ -28,8 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from xmipp_metadata.metadata.relion_tomo import tomo_star_to_tilt_particles  # noqa: E402
 
 
-# Everything RELION needs per particle. Anything else the expansion produced is dropped:
-# RELION's metadata parser is not obliged to tolerate labels it does not know.
+# Everything RELION needs per particle; anything else is dropped
 _PARTICLE_LABELS = [
     "rlnImageName", "rlnMicrographName",
     "rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi",
@@ -63,8 +62,7 @@ def main():
                     help="override rlnCtfDataAreCtfPremultiplied")
     args = ap.parse_args()
 
-    # shift_units="angstrom" is what RELION reads; the pixel variant exists for consumers
-    # that want pixels and is exactly the thing that makes the file unloadable here.
+    # shift_units="angstrom" is what RELION reads
     df = tomo_star_to_tilt_particles(args.input, args.tomograms,
                                      shifts=args.shifts, shift_units="angstrom")
 
@@ -102,8 +100,7 @@ def main():
     }])
 
     parts = pd.DataFrame({c: df[c] for c in _PARTICLE_LABELS if c in df.columns})
-    # one optics group, so the per-row reference has to point at it rather than at
-    # whatever grouping the input happened to use (Warp writes a string here)
+    # one optics group, so every row points at it (Warp writes a string here)
     parts["rlnOpticsGroup"] = 1
     if "rlnRandomSubset" not in parts.columns:
         parts["rlnRandomSubset"] = np.arange(1, len(parts) + 1) % 2 + 1

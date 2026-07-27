@@ -236,8 +236,7 @@ def _choose_particles_table(star_obj: Dict[str, pd.DataFrame]) -> str:
     best_score = -1
     wanted = {"rlnImageName", "rlnMicrographName", "rlnCoordinateX", "rlnCoordinateY"}
     for k, df in star_obj.items():
-        # starfile hands loop-less blocks back as a plain dict (or, on older
-        # releases, a Series); either way they carry labels but no .columns
+        # loop-less blocks come back as a dict or Series, with no .columns
         score = len(wanted.intersection(_table_labels(df)))
         if score > best_score:
             best_key = k

@@ -4,15 +4,10 @@ Validate a synthetic data set built by ``make_synthetic_tomo.py``, in two stages
 
     python validate_synthetic.py /path/to/synth_relion
 
-Stage 1 reconstructs from ``ground_truth/poses.npz`` -- the poses actually used to
-render the images. If that does not reproduce the phantom, the *test* is broken and
-nothing it says about the converter means anything. Stage 2 reconstructs from the poses
-the converter derives from the star files. Stage 2 is the real test; stage 1 is what
-makes a stage 2 failure attributable.
-
-The reconstruction here is a plain numpy Fourier-slice gridding, deliberately not hax's:
-this script answers "is the metadata right", and bringing in the GPU reconstructor would
-mix that question with a second one. Run hax afterwards for the end-to-end check.
+Stage 1 reconstructs from ``ground_truth/poses.npz``, the poses the images were rendered
+with; stage 2 from the poses the converter derives from the star files. Stage 2 is the
+test, stage 1 is what makes a stage 2 failure attributable. The reconstruction is a plain
+numpy Fourier-slice gridding, so only the metadata is under test.
 """
 
 import argparse
@@ -39,19 +34,13 @@ def relion_matrix(rot, tilt, psi):
 
 
 def reconstruct(images, angles, shifts, weights, box, premultiplied=True):
-    """Wiener gridding with trilinear insertion.
-
-    The denominator is always sum((CTF*W)^2). The numerator depends on what the stack
-    holds: a pre-multiplied image already carries one factor of CTF*W, a plain
-    observation still needs it applied here.
-    """
+    """Wiener gridding, ``sum(image * w) / sum(w^2)``, with trilinear insertion."""
     f0, f1 = _slice_grid(box)
     num = np.zeros((box,) * 3, np.complex128)
     den = np.zeros((box,) * 3, np.float64)
 
     for img, ang, sh, w in zip(images, angles, shifts, weights):
         ft = np.fft.fftshift(np.fft.fft2(np.fft.ifftshift(img)))
-        # undo the stored translation, same sense as the reconstructor under test:
         # the content sits at (p - shift), so divide that phase out
         ft = ft * np.exp(-2j * np.pi * (sh[1] * f0 + sh[0] * f1) / box)
         if not premultiplied:
@@ -152,8 +141,7 @@ def main():
         assert md.binaries, "the stacks were not found"
         images = load_images(md, box).astype(np.float64)
 
-        # the weight the images were pre-multiplied by, rebuilt from the converted
-        # metadata: CTF (with its per-particle depth term) times the dose weight
+        # the CTF*W weight the images were pre-multiplied by, from the converted metadata
         cols = {c: md.getMetaDataColumns(c) for c in
                 ("ctfDefocusU", "ctfDefocusV", "ctfDefocusAngle",
                  "ctfSphericalAberration", "ctfVoltage", "ctfScaleFactor", "preExposure")
@@ -168,9 +156,7 @@ def main():
                if "preExposure" in cols else 1.0)
             for i in range(n)]).astype(np.float64)
 
-        # Getting this wrong silently destroys the reconstruction, and a silent wrong
-        # answer is the failure this whole exercise exists to prevent -- so read it from
-        # the converted table, and fall back to scanning the file's own optics block.
+        # from the converted table, falling back to the file's own optics block
         premult = True
         if md.isMetaDataLabel("rlnCtfDataAreCtfPremultiplied"):
             premult = bool(int(md.getMetaDataColumns("rlnCtfDataAreCtfPremultiplied")[0]))
@@ -216,10 +202,7 @@ def main():
     print(f"\n  agreement between the two              median FSC {agree:.4f}")
 
     print()
-    # The verdict keys on stage1-vs-stage2, not on either against the phantom. The two
-    # pose sets describe the same images and must agree exactly; agreeing with the
-    # phantom is bounded by interpolation, the Wiener floor and how much of Fourier
-    # space this many particles actually cover, none of which is a convention question.
+    # Keyed on stage1-vs-stage2; agreement with the phantom is bounded by interpolation
     if agree < 0.99:
         print(f"FAIL: the converter's poses differ from the ones the images were "
               f"rendered with (agreement {agree:.4f})")

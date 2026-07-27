@@ -2,17 +2,12 @@
 """
 Compare two reconstructions voxel-by-voxel and by FSC.
 
-    python compare_volumes.py relion.mrc hax.mrc [--apix 4.0]
+    python compare_volumes.py reference.mrc test.mrc [--apix 4.0]
 
-The point of this script is that it does not care whether the maps are any *good*.
-Two reconstructions built from the same particles and the same poses must agree
-whatever those poses are, so a collapsed refinement is still a valid test case --
-in fact a better one, because a wrong convention cannot hide behind a
-recognisable structure.
-
-FSC ~ 1.0 out to Nyquist means the two reconstructors agree. A dip that starts
-low and stays low means a convention mismatch; a dip that only appears at high
-frequency means a weighting or interpolation difference, which is benign.
+Two reconstructions built from the same particles and poses must agree whatever those
+poses are, so the maps do not have to be any good for the comparison to mean something.
+FSC ~ 1 to Nyquist means the reconstructors agree; a dip from the lowest shells means a
+convention mismatch, a dip only at high frequency a weighting difference.
 """
 
 import argparse
@@ -71,18 +66,14 @@ def main():
         print("\nshapes differ -- reconstruct at the same box before comparing")
         return 1
 
-    # normalise away any global scale/offset: a reconstructor is allowed to differ
-    # by a constant, and the FSC is blind to it anyway
+    # normalise away any global scale/offset
     z = lambda v: (v - v.mean()) / (v.std() or 1.0)
     a, b = z(ref), z(test)
 
     cc = float((a * b).mean())
     cc_flip = float((a * z(test[::-1, ::-1, ::-1])).mean())
 
-    # Compare MAGNITUDES. A globally contrast-inverted map makes both correlations
-    # negative, and a signed comparison then reports the mirror as the better match and
-    # cries "mirrored" about a map that is merely negated -- which is a different bug
-    # with a different fix, so conflating them sends you hunting the wrong thing.
+    # Magnitudes: a negated map makes both correlations negative
     inverted = cc < 0 and abs(cc) > 0.5
     mirrored = abs(cc_flip) > abs(cc) + 0.1
 
@@ -100,8 +91,6 @@ def main():
         print(f"{i:>6} {i / (n * (apix or 1.0)):>10.4f} {res:>8.1f}{unit} {c[i]:>8.4f}")
 
     good = c[1:len(c) - 1]
-    # Judge on |FSC|: a sign flip is a one-line fix, not a disagreement about geometry,
-    # and reporting it as one would bury a result that is otherwise a pass.
     med, med_abs = float(np.median(good)), float(np.median(np.abs(good)))
     print(f"\nmedian FSC over all shells  {med: .4f}   (|FSC| {med_abs:.4f})")
     signal = good[np.abs(good) > 0.5]

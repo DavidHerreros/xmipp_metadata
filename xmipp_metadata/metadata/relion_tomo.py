@@ -27,42 +27,22 @@
 """
 RELION tomography -> per-tilt-image (single-particle-like) metadata.
 
-A RELION-5 subtomogram data set stores the alignment of a particle in *two*
-separate places:
+A RELION-5 subtomogram data set splits a particle's alignment in two: the tilt-series
+geometry (one 4x4 projection matrix per tilt image, in the tomograms STAR file) and the
+subtomogram alignment (one 3D orientation and shift per particle, in the particles STAR
+file). Neither is a usable 2D pose on its own. This module composes them into the
+per (particle, tilt image) pose a single-particle reconstruction needs.
 
-  * the tilt-series geometry, one 4x4 projection matrix per tilt image, which
-    maps a point of the tomogram onto a pixel of that tilt image.  It lives in
-    the tomograms STAR file (``rlnTomoProjX/Y/Z/W``, or the
-    ``rlnTomoXTilt/YTilt/ZRot/XShiftAngst/YShiftAngst`` parameterisation).
-  * the subtomogram alignment, one 3D orientation + one 3D shift per particle,
-    which lives in the particles STAR file (``rlnAngleRot/Tilt/Psi`` and
-    ``rlnOriginX/Y/ZAngst``).
-
-Neither one on its own is a usable 2D pose.  This module composes them into the
-per (particle, tilt image) pose that a *single-particle* reconstruction needs, so
-that back-projecting the 2D tilt images with the resulting Euler angles and
-shifts reproduces the very volume ``relion_tomo_reconstruct_particle`` produces.
-
-Everything here is derived from RELION's own source, not from a re-derivation:
-
-  ``Tomogram::setProjectionMatrix``              -> :func:`projection_matrix_from_angles`
-  ``ParticleSet::getPosition``                   -> :func:`ParticleGeometry.positions`
-  ``ParticleSet::getMatrix3x3``                  -> ``A_subtomogram @ A_particle``
-  ``ParticleSet::getMatrix4x4``                  -> ``Ts * R * Tc``
-  ``TomoExtraction::extractAt2D_Fourier``        -> the shift convention
-  ``reconstruct_particle.cpp``                   -> ``projPart = projCut * particleToTomo``
-  ``Tomogram::getCtf`` / ``getDepthOffset``      -> :func:`TiltSeriesGeometry.defocus_offset`
-  ``Euler_angles2matrix`` / ``Euler_matrix2angles`` -> :func:`relion_angles_to_matrix` and inverse
-
-The key algebraic result (see ``docs`` in :func:`tomo_star_to_tilt_particles`) is
-that once the tilt image is cropped around the projected particle centre, the
-composed transform is a *pure rotation about the box centre*::
+The composition follows RELION's own source: ``Tomogram::setProjectionMatrix``,
+``ParticleSet::getPosition``, ``ParticleSet::getMatrix3x3`` and ``getMatrix4x4``,
+``TomoExtraction::extractAt2D_Fourier``, ``Tomogram::getCtf`` and
+``Euler_angles2matrix``. Once the tilt image is cropped around the projected particle
+centre it reduces to a pure rotation about the box centre::
 
     projPart_f(u) = R_f @ A_sub @ A_part @ (u - s/2) + s/2
 
-so the per-tilt-image RELION Euler triplet is simply the decomposition of
-``R_f @ A_sub @ A_part``, and the only residual translation is the sub-pixel
-part of the crop.
+so the per-tilt Euler triplet is the decomposition of ``R_f @ A_sub @ A_part``, and the
+only residual translation is the sub-pixel part of the crop.
 """
 
 import os
@@ -102,12 +82,10 @@ _FLT_EPSILON = float(np.finfo(np.float32).eps)
 
 def relion_angles_to_matrix(rot, tilt, psi):
     """
-    RELION's ``Euler_angles2matrix`` (a.k.a. ``Euler::anglesToMatrix3``), vectorised.
+    RELION's ``Euler_angles2matrix``, vectorised.
 
-    The returned matrix ``A`` maps *3D volume coordinates onto 2D image
-    coordinates*: the first two rows of ``A`` are the in-plane axes of the
-    projection, the third row is the projection (viewing) direction.  Equivalently
-    ``A = (Rz(rot) @ Ry(tilt) @ Rz(psi)).T`` with right-handed active rotations.
+    ``A = (Rz(rot) @ Ry(tilt) @ Rz(psi)).T`` maps 3D volume coordinates onto 2D image
+    coordinates; its third row is the viewing direction.
 
         :param rot, tilt, psi --> Euler angles in DEGREES (scalars or arrays)
         :returns: (..., 3, 3) array of rotation matrices
@@ -212,18 +190,7 @@ def _axis_rotation(axis, angle_deg):
 # --------------------------------------------------------------------------- #
 #  2D image deformations
 # --------------------------------------------------------------------------- #
-#
-# `relion_tomo_align --deformation` fits a 2D warp per tilt image on top of the
-# linear tilt-series geometry. RELION applies it in ``Tomogram::projectPoint``,
-# *after* the projection matrix, and every model is of the form
-#
-#     apply(pl) = pl + computeShift(pl, coefficients)
-#
-# Crucially it never enters the pose: ``extractAt2D_Fourier`` crops around the
-# deformed centre while ``projCut`` keeps the *undeformed* matrix, and
-# ``FourierBackprojection::backprojectSlice_backward`` reads only the 3x3 block
-# and discards the translation column. So a deformation moves *where the tilt
-# image is cropped* and nothing else.
+# `relion_tomo_align --deformation` warps where a tilt image is cropped, never the pose.
 
 class Linear2DDeformation:
     """RELION ``Linear2DDeformationModel``: 3 coefficients, an affine shear."""
@@ -262,8 +229,7 @@ class Spline2DDeformation:
         if coefficients.size < n:
             raise ValueError(f"spline deformation needs {n} coefficients, "
                              f"got {coefficients.size}")
-        # RawImage<DataPoint>(gx, gy, 2) with DataPoint = 4 doubles, so the flat
-        # index of component c of node (x, y) of dimension d is 4*(x + y*gx + d*gx*gy) + c
+        # RawImage<DataPoint>(gx, gy, 2), DataPoint = 4 doubles
         self.nodes = coefficients[:n].reshape(2, gy, gx, 4)
 
     @staticmethod
@@ -342,8 +308,7 @@ class Fourier2DDeformation:
         if coefficients.size < 4 * n_freq:
             raise ValueError(f"Fourier deformation needs {4 * n_freq} coefficients, "
                              f"got {coefficients.size}")
-        # RawImage<dComplex>(n_freq, 2): index of dimension d, frequency i is
-        # 2*(i + d*n_freq) + {real, imag}
+        # RawImage<dComplex>(n_freq, 2)
         self.coefficients = coefficients[:4 * n_freq].reshape(2, n_freq, 2)
 
     def apply(self, xy):
@@ -476,12 +441,9 @@ class TiltSeriesGeometry:
         """
         True when the projection matrices carry no translation at all.
 
-        RELION always writes the full affine (``-R*centre + image_centre + shift``),
-        but WarpTools' ``ts_export_particles`` writes a literal zero translation
-        column -- ``$"[{M.M11},{M.M12},{M.M13},0]"`` and ``"[0,0,0,1]"``. Such a
-        matrix still gives the correct *orientation*, and the correct defocus offset
-        (which is a difference, so the missing translation cancels), but projecting an
-        absolute tomogram coordinate through it does not land anywhere meaningful.
+        RELION writes the full affine; WarpTools writes a literal zero translation
+        column, which keeps the orientation and the defocus offset but makes an
+        absolute projected coordinate meaningless.
         """
         return not np.any(np.abs(self.projection[:, :3, 3]) > 0)
 
@@ -512,8 +474,7 @@ class TiltSeriesGeometry:
         else:
             raise ValueError(f"points must be (N, 3) or (N, F, 3), got {points.shape}")
 
-        # A deformation warps the projected position only -- it never enters the
-        # pose, so the depth (and therefore the defocus) is untouched
+        # A deformation warps the projected position only, not the depth
         if self.has_deformations:
             for f, deformation in enumerate(self.deformations):
                 if deformation is not None:
@@ -553,11 +514,8 @@ class TiltSeriesGeometry:
 
 def _read_star(path):
     """
-    starfile.read that always yields a dict of DataFrames.  Loop-less blocks --
-    ``data_optimisation_set`` is one -- come back as a plain ``dict`` (starfile
-    >= 0.5) or a ``Series`` (older releases), so both are promoted to a single-row
-    frame rather than silently dropped.  Dropping them would lose the optimisation
-    set entirely, which is the one block that names every other file.
+    starfile.read as a dict of DataFrames, promoting loop-less blocks (a dict on
+    starfile >= 0.5, a Series on older releases) to a single-row frame.
     """
     out = starfile.read(path, always_dict=True)
     blocks = {}
@@ -571,9 +529,7 @@ def _read_star(path):
     return blocks
 
 
-# The labels that identify an optimisation set. RELION names the block
-# ``optimisation_set``, but a hand-written or re-exported file may leave it
-# unnamed, so the labels -- not the block name -- are what we key on.
+# Keyed on the label, not the block name: a re-exported file may leave it unnamed.
 _OPTIMISATION_SET_LABEL = "rlnTomoParticlesFile"
 
 
@@ -743,8 +699,7 @@ def read_trajectories_star(path):
         if not all(c in df.columns for c in cols):
             continue
         shifts = np.stack([df[c].to_numpy(dtype=np.float64) for c in cols], axis=-1)
-        # RELION names the block after the particle, but tolerate a file that
-        # instead carries the name as a column
+        # RELION names the block after the particle; tolerate it as a column too
         if "rlnTomoParticleName" in df.columns:
             key = str(df["rlnTomoParticleName"].to_numpy()[0])
         else:
@@ -816,10 +771,7 @@ def read_tomograms_star(path, tilt_image_size=None):
     if "rlnTomoName" not in g.columns:
         raise ValueError(f"{path} has no rlnTomoName column")
 
-    # Inline layout (RELION-4, and what WarpTools writes): the per-tomogram tables
-    # follow the global block in the same file. RELION matches them by position
-    # (``allTables[t+1]``), so fall back to that when the block name does not match
-    # rlnTomoName -- Warp, for one, does not always keep the two in step.
+    # Inline layout (RELION-4, WarpTools): RELION matches the per-tomogram tables by position
     inline_blocks = [k for k in blocks if k != "global"]
 
     out = {}
@@ -969,9 +921,7 @@ def _particle_positions(df, geom):
     else:
         A_sub = np.broadcast_to(np.eye(3), (n, 3, 3))
 
-    # ``delta`` is the displacement the origin shift applies to the coordinate, kept
-    # separately because it is what the "from_origin" shift mode projects: being a
-    # *difference* of positions, it survives a projection matrix with no translation.
+    # ``delta`` is what the "from_origin" shift mode projects
     delta = -np.einsum('nij,nj->ni', A_sub, offset) / apix
     return pos + delta, A_sub, delta
 
@@ -992,7 +942,6 @@ def is_relion_tomo_star(blocks):
         if not isinstance(df, pd.DataFrame):
             continue
         cols = set(df.columns)
-        # an optimisation set is not a particles table itself, but it names one
         if _OPTIMISATION_SET_LABEL in cols:
             return True
         if "rlnTomoName" in cols and (
@@ -1022,53 +971,17 @@ def tomo_star_to_tilt_particles(
     Expand a RELION tomography particles STAR file into one row per
     (particle, visible tilt image), carrying the *composed* 2D alignment.
 
-    The composition, straight out of ``reconstruct_particle.cpp``::
-
-        projPart_f = projCut_f @ particleToTomo
-                   = [P_f with its shift set so the particle lands on the box centre]
-                     @ [Ts(pos) @ R(A_sub @ A_part) @ Tc(-s/2)]
-
-    Expanding the affine parts, every translation cancels and what is left is::
+    Following ``reconstruct_particle.cpp``, every translation cancels and the composition
+    reduces to a pure rotation about the box centre::
 
         u  ->  (R_f @ A_sub @ A_part) @ (u - s/2) + s/2
 
-    i.e. a pure rotation about the box centre.  Therefore
+    so the per-tilt Euler triplet is ``matrix_to_relion_angles(R_f @ A_sub @ A_part)`` and
+    the only translation left is the sub-pixel part of the crop.
 
-      * the per-tilt Euler triplet is ``matrix_to_relion_angles(R_f @ A_sub @ A_part)``,
-        where ``R_f`` is the 3x3 block of the tilt-series projection matrix;
-      * the only translation left is the difference between the integer pixel the
-        box is cropped at and the exact projected particle centre.  RELION removes
-        that residual with a Fourier phase shift during extraction, so its own 2D
-        stacks are already perfectly centred.
-
-    ``shifts`` controls which of those two situations is assumed:
-
-      * ``"zero"``        -- the images are already centred (RELION 2D stacks).
-      * ``"residual"``    -- the images will be cropped at the integer pixel given
-                             by ``rlnCoordinateX/Y``, so the sub-pixel remainder is
-                             written to ``rlnOriginX/YAngst``.
-      * ``"from_origin"`` -- the images were extracted centred on ``rlnCoordinateX/Y/Z``
-                             and ``rlnOriginX/Y/ZAngst`` is a 3D correction refined
-                             *since* that extraction. Its per-tilt 2D effect is written
-                             out. This is what a refinement run on top of already-extracted
-                             2D stacks produces, and dropping it would discard the whole
-                             translational part of that refinement. It stays exact on
-                             rotation-only projection matrices, because projecting a
-                             *difference* of positions cancels the missing translation.
-      * ``"auto"``        -- ``"zero"`` when the input carries ``rlnTomoVisibleFrames``
-                             (2D stacks were written), ``"residual"`` otherwise. Note
-                             ``auto`` never selects ``from_origin``: whether an origin is
-                             a correction *since* extraction or was already folded into
-                             the extraction cannot be told from the file, so it has to be
-                             asked for. A warning is raised when the choice looks wrong.
-
-    Sign convention for the residual follows RELION everywhere: the true particle
-    centre is ``coordinate - origin``, exactly as in ``ParticleSet::getPosition``.
-
-    ``rlnCoordinateX/Y`` and the residual are expressed on the *unbinned* tilt-series
-    pixel grid, because that is the grid RELION crops on (``integralShift[f] =
-    round(centers[f]) - s/2`` happens before the Fourier downsampling).  Since
-    ``rlnOriginX/YAngst`` is in Angstrom it is independent of any later binning.
+    Sign convention follows RELION: the true particle centre is ``coordinate - origin``.
+    ``rlnCoordinateX/Y`` is on the unbinned tilt-series grid, the grid RELION crops on;
+    ``rlnOriginX/YAngst`` is in Angstrom and so independent of any later binning.
 
         :param particles_star (string) --> particles STAR, or an optimisation_set.star
         :param tomograms_star (string - Optional) --> tomograms STAR; taken from the
@@ -1079,13 +992,11 @@ def tomo_star_to_tilt_particles(
         :param binning (float - Optional) --> output pixel size / unbinned tilt-series
                pixel size. Defaults to rlnImagePixelSize / rlnTomoTiltSeriesPixelSize,
                falling back to 1.0
-        :param shifts (string) --> how the per-tilt 2D shift is filled in:
-               "residual" reports the sub-pixel remainder of a crop the caller still has to
-               make; "from_origin" projects a 3D origin that was refined after extraction
-               onto each tilt; "zero" leaves it empty. "auto" (the default) picks
-               "residual" when nothing has been extracted yet, "from_origin" when extracted
-               2D stacks come with a non-zero origin, and "zero" otherwise -- see the
-               comment at the selection for why that is a deduction rather than a guess
+        :param shifts (string) --> how the per-tilt 2D shift is filled in. "residual" is
+               the sub-pixel remainder of a crop the caller still has to make;
+               "from_origin" projects a 3D origin refined after extraction onto each tilt;
+               "zero" leaves it empty. "auto" picks "residual" when nothing is extracted
+               yet, "from_origin" for extracted stacks with a non-zero origin, else "zero"
         :param shift_units (string) --> "angstrom" writes rlnOriginX/YAngst, RELION's
                own convention; "pixel" writes rlnOriginX/Y in *output* pixels instead,
                for consumers that expect pixels
@@ -1171,9 +1082,7 @@ def tomo_star_to_tilt_particles(
         parts = parts.merge(optics[optics_cols], on="rlnOpticsGroup", how="left")
 
     # ---- output sampling --------------------------------------------------- #
-    # RELION's extraction takes a single --bin for the whole data set, so binning is
-    # a scalar here too; guard against tomograms that disagree on the tilt-series
-    # sampling, which would make that scalar meaningless.
+    # RELION extracts with a single --bin, so binning is a scalar here too
     tilt_apix = np.array([g.pixel_size for g in geoms.values()])
     apix_ts_ref = float(tilt_apix[0])
     if not np.allclose(tilt_apix, apix_ts_ref, rtol=1e-6):
@@ -1201,22 +1110,13 @@ def tomo_star_to_tilt_particles(
 
     if shifts == "auto":
         if not has_stack2d:
-            # Nothing has been extracted yet, so the caller still has to crop: report where
-            # to crop and what is left over after rounding.
             shifts = "residual"
         elif largest_origin > 1e-6:
-            # RELION's extraction *consumes* the origin -- ``subtomo.cpp`` folds it into the
-            # coordinate and then writes ``setParticleOffset(new_id, d3Vector(0,0,0))``. So a
-            # non-zero origin sitting next to already-extracted 2D stacks can only have been
-            # refined afterwards, and projecting it onto each tilt is the only reading that
-            # is not simply wrong. There is no ambiguity here to be careful about: the
-            # alternative silently throws away the whole translational refinement.
+            # RELION's extraction zeroes the origin, so a non-zero one was refined after it
             shifts = "from_origin"
         else:
             shifts = "zero"
 
-    # Dropping a refined origin is silent and expensive -- the map just comes out worse --
-    # so say so loudly if it was asked for explicitly.
     if shifts == "zero" and largest_origin > 1e-6:
         warnings.warn(
             f"shifts='zero' was requested but the particles carry non-zero origin shifts "
@@ -1234,10 +1134,7 @@ def tomo_star_to_tilt_particles(
             "stacks: any frame this disagrees with RELION on will misalign the "
             "slice indices written to rlnImageName", RuntimeWarning)
 
-    # WarpTools writes rotation-only projection matrices. The orientation and the
-    # defocus gradient survive that, but anything derived from an *absolute* projected
-    # position does not -- so refuse the two modes that would silently produce
-    # nonsense rather than let them through.
+    # Rotation-only matrices keep the orientation and defocus but not absolute positions
     rotation_only = [name for name, geom in geoms.items() if geom.is_rotation_only]
     if rotation_only:
         detail = (f"{len(rotation_only)} tomogram(s), e.g. '{rotation_only[0]}', have "
@@ -1339,27 +1236,16 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
         visible = geom.visibility(projected, 0.5 * float(box_size))
 
     # ---- shifts ------------------------------------------------------------ #
-    # The crop happens on the unbinned tilt-series grid, exactly as RELION does it
-    # (integralShift[f] = round(centers[f]) - s/2, before the Fourier downsampling)
+    # The crop happens on the unbinned grid, as RELION does it
     centre_px = projected[..., :2]
     coord_int = np.rint(centre_px)
     if shifts == "zero":
         origin_angst = np.zeros_like(centre_px)
     elif shifts == "from_origin":
-        # The images were extracted centred on rlnCoordinateX/Y/Z; rlnOriginX/Y/ZAngst is
-        # the 3D correction refined *since*. Its per-tilt 2D effect is the projection of
-        # that displacement -- and because this is a difference of two positions, the
-        # translation column of the projection matrix cancels, so it stays exact on the
-        # rotation-only matrices WarpTools writes.
+        # Projection of a difference of two positions, so the matrix translation cancels.
         delta_2d = np.einsum('fij,nj->nfi', geom.projection[:, :3, :3], delta)[..., :2]
-        # RELION: true centre = coordinate - origin, and the refined centre sits at
-        # (extraction centre + delta_2d), so origin = -delta_2d
         origin_angst = -delta_2d * apix_ts
-        # The crop already happened, at the extraction centre, and nothing here is
-        # instructing a new one -- so report that centre unrounded rather than rounding it
-        # as the "residual" mode does. Rounding would have to be folded into the origin,
-        # which would stop it being a pure difference and so stop it working on a
-        # rotation-only geometry, which is the whole point of this mode.
+        # The unrounded extraction centre: rounding here would break the pure difference.
         coord_int = centre_px - delta_2d
     else:
         # RELION: true centre = coordinate - origin  =>  origin = coordinate - centre
@@ -1376,8 +1262,7 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
     if pi.size == 0:
         return pd.DataFrame()
 
-    # index of each tilt image inside its particle's 2D stack: RELION writes only
-    # the visible slices, in frame order, so this is a running count per particle
+    # RELION writes only the visible slices, in frame order
     slice_index = (np.cumsum(visible, axis=1) - 1)[pi, fi]
 
     out = {
@@ -1406,8 +1291,7 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
         out["rlnOriginX"] = origin_angst[pi, fi, 0] / apix_out
         out["rlnOriginY"] = origin_angst[pi, fi, 1] / apix_out
 
-    # Microscope constants live in the tomograms file, but older data sets keep them
-    # only in the particles' optics group, so fall back to whatever is there
+    # Older data sets keep the microscope constants only in the optics group
     for label, value in (("rlnVoltage", geom.voltage),
                          ("rlnSphericalAberration", geom.spherical_aberration),
                          ("rlnAmplitudeContrast", geom.amplitude_contrast)):

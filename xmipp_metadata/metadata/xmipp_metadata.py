@@ -109,21 +109,11 @@ class XmippMetaData(object):
 
     def __init__(self, file_name=None, rows=None, readFrom="Auto", tomo=None,
                  tomograms_star=None, tomo_kwargs=None, **kwargs):
-        # Directory the metadata was read from. Relative image paths in the metadata are
-        # defined relative to this directory (not the process CWD), so it is the base used
-        # to re-resolve them when writing elsewhere (see ``write(updateImagePaths=True)``).
-        # ``None`` for metadata built in-memory (no source file), in which case the CWD is
-        # used as a best-effort fallback.
+        # Directory the metadata was read from; the starting point for _findImageRoot.
         self._source_dir = None
-        # Directory relative image paths actually resolve against. RELION writes them
-        # relative to the *project root*, which is neither the CWD nor the directory the
-        # star file sits in: a refinement's run_data.star lives in Refine3D/jobNNN/ but
-        # points at Extract/jobNNN/Particles/... ``_findImageRoot`` locates it by testing
-        # where the stacks really are, so reading works from any working directory.
+        # Project root that relative image paths resolve against, located by _findImageRoot.
         self._image_root = None
-        # True once a tomography STAR file has been expanded to one row per tilt
-        # image. Consumers can branch on it instead of sniffing for columns;
-        # tomoFormat says which flavour it came from ("relion" or "warp").
+        # True once a tomography STAR file has been expanded to one row per tilt image
         self.isTomo = False
         self.tomoFormat = None
         if file_name:
@@ -239,15 +229,10 @@ class XmippMetaData(object):
             :param tomograms_star (string - Optional) --> Tomograms STAR file
             :param tomo_kwargs (dict - Optional) --> Extra options for the expansion
         '''
-        # Relative image paths in this file are defined relative to its own directory;
-        # remember it so a later write to a different location can re-resolve them.
+        # Remembered so a later write to another location can re-resolve image paths.
         self._source_dir = os.path.dirname(os.path.abspath(file_name))
 
-        # Tomography metadata has to be turned into a per-tilt-image table before
-        # anything else touches it. A RELION-5 file holds only half of the alignment
-        # -- the tilt-series geometry lives in a separate tomograms STAR file and has
-        # to be composed in. A Warp-1.x / M file is already expanded and only needs
-        # its particle grouping made explicit.
+        # A RELION-5 file needs the tilt-series geometry composed in; a Warp file does not.
         if tomo is not False and os.path.splitext(file_name)[1] == ".star":
             kind = tomo if isinstance(tomo, str) else None
             if kind is None:
@@ -303,9 +288,7 @@ class XmippMetaData(object):
             _ = self.getMetaDataImage(0)
         except (FileNotFoundError, KeyError):
             self.binaries = False
-            # Saying only "not found" sends people hunting for a copying mistake when the
-            # real answer is almost always that the paths are project-relative and the root
-            # is not on the list of places tried.
+
             if self.isMetaDataLabel("image") and len(self):
                 sample = str(self.getMetadataItems(0, "image")[0])
                 warnings.warn(
@@ -321,14 +304,10 @@ class XmippMetaData(object):
 
     def _findImageRoot(self, probe_rows=8):
         '''
-        Locate the directory that relative image paths are relative to.
+        Locate the directory relative image paths are relative to.
 
-        RELION anchors rlnImageName at the project root, so a star file two job
-        directories deep still says ``Extract/job010/Particles/x.mrcs``. Rather than
-        guessing which convention a given file follows, the candidate roots are tried
-        against paths that are actually in the table and the first one where the stacks
-        exist wins. Several rows are probed, not one, so a single missing file does not
-        pick the wrong root.
+        RELION anchors rlnImageName at the project root, so the candidate roots are tried
+        against paths from the table and the first one where the stacks exist wins.
 
             :returns: absolute directory to join relative image paths onto
         '''
@@ -347,8 +326,7 @@ class XmippMetaData(object):
         candidates = [cwd]
         if self._source_dir is not None:
             d = self._source_dir
-            # A job's star file sits at <root>/<JobType>/jobNNN/, so the root is two levels
-            # up; walk a little further for projects nested deeper than that.
+            # A job's star file sits at <root>/<JobType>/jobNNN/, so the root is two up
             for _ in range(4):
                 candidates.append(d)
                 parent = os.path.dirname(d)
@@ -370,14 +348,9 @@ class XmippMetaData(object):
     @staticmethod
     def _sniffTomoKind(file_name, max_lines=5000):
         '''
-        Cheap header sniff for a tomography particles file. Only the label
-        declarations are scanned -- parsing a multi-million-row particles table twice
-        just to decide how to read it would be wasteful.
-
-        Note the Warp/M test insists on ``rlnCtfScalefactor``, a tilt-series-only
-        label. Grouping columns alone would not do: ordinary single-particle files
-        also carry ``rlnGroupNumber``, and mistaking one for a tilt series would
-        silently fuse unrelated particles into one.
+        Cheap header sniff for a tomography particles file: only the label declarations
+        are scanned. The Warp/M test insists on ``rlnCtfScalefactor``, a tilt-series-only
+        label, since ordinary single-particle files also carry grouping columns.
 
             :param file_name (string) --> Path to the STAR file
             :returns: "relion", "warp", or None when this is not tomography metadata
@@ -396,10 +369,7 @@ class XmippMetaData(object):
         except OSError:
             return None
 
-        # An optimisation set names the particles file rather than holding it. The
-        # block name alone is not enough to spot one: RELION writes
-        # ``data_optimisation_set``, but a re-exported file may leave the block
-        # unnamed, and then the label is the only marker left.
+        # An optimisation set names the particles file; the block may be unnamed
         if "_rlnTomoParticlesFile" in labels:
             return "relion"
         if "_rlnTomoName" in labels and (
@@ -425,10 +395,7 @@ class XmippMetaData(object):
             except ValueError as e:
                 index, file = "", image
 
-            # Image absolute path. A relative path is resolved against the project root
-            # found at read time (``_image_root``), not against the CWD and not against the
-            # star file's own directory -- RELION anchors rlnImageName at the project root,
-            # which for a job's star file is two directories above it.
+            # Relative paths resolve against the project root found at read time
             if not os.path.isabs(file):
                 file = os.path.abspath(self._resolveImagePath(file))
 

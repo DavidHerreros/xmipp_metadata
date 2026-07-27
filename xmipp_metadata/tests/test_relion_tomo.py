@@ -26,12 +26,8 @@
 # **************************************************************************
 
 """
-The tests below are deliberately written as a *second, independent* transcription
-of the RELION routines involved (``Euler_angles2matrix``, ``Tomogram::setProjectionMatrix``,
-``ParticleSet::getMatrix4x4``, ``TomoExtraction::extractAt2D_Fourier`` and the
-``projPart = scaleRatio * projCut * particleToTomo`` line of
-``reconstruct_particle.cpp``), so that they check the conversion against RELION's
-algebra rather than against itself.
+A second, independent transcription of the RELION routines involved, so the conversion is
+checked against RELION's algebra rather than against itself.
 """
 
 import os
@@ -586,8 +582,7 @@ def test_shift_modes(tomo_project):
     # the residual is the sub-pixel part of the crop, so it never exceeds half a pixel
     assert np.all(np.abs(residual["rlnOriginXAngst"]) <= 0.5 * apix + 1e-9)
     assert np.all(np.abs(residual["rlnOriginYAngst"]) <= 0.5 * apix + 1e-9)
-    # RELION's relation "true centre = coordinate - origin" must hold exactly, with
-    # the true centre recomputed independently from the geometry
+    # "true centre = coordinate - origin", against a centre recomputed from the geometry
     from xmipp_metadata.metadata.relion_tomo import _particle_positions
 
     geoms = read_tomograms_star(tomo_project["tomograms"], **common)
@@ -604,10 +599,7 @@ def test_shift_modes(tomo_project):
         assert np.allclose(got_x, centre[..., 0].ravel(), atol=1e-9)
         assert np.allclose(got_y, centre[..., 1].ravel(), atol=1e-9)
 
-    # The fixture has extracted 2D stacks AND non-zero origins, so "auto" must pick
-    # "from_origin": RELION's extraction zeroes the origin (subtomo.cpp writes
-    # setParticleOffset(new_id, d3Vector(0,0,0))), so one that is non-zero here can only
-    # have been refined afterwards and has to be projected onto each tilt.
+    # Extracted stacks plus non-zero origins, so "auto" must pick "from_origin"
     auto = tomo_star_to_tilt_particles(tomo_project["particles"],
                                         tomo_project["tomograms"], **common)
     from_origin = tomo_star_to_tilt_particles(tomo_project["particles"],
@@ -982,11 +974,7 @@ def test_visibility_is_honoured(tomo_project, tmp_path):
 
 def _write_optimisation_set(path, block_name, particles, tomograms, extra=None):
     """
-    Write a RELION optimisation set by hand.
-
-    It is written as text rather than through ``starfile.write`` so the block name
-    can be controlled exactly -- the point of these tests is that a loop-less block
-    must be found by its labels, not by what the block happens to be called.
+    Write a RELION optimisation set by hand, so the block name can be controlled exactly.
     """
     rows = {"rlnTomoParticlesFile": str(particles),
             "rlnTomoTomogramsFile": str(tomograms)}
@@ -1000,9 +988,7 @@ def _write_optimisation_set(path, block_name, particles, tomograms, extra=None):
 @pytest.mark.parametrize("block_name", ["optimisation_set", ""])
 def test_optimisation_set_resolves_its_files(tomo_project, tmp_path, block_name):
     """
-    starfile hands a loop-less block back as a plain dict, not a frame. If that is
-    dropped the optimisation set vanishes and the file reads as an ordinary
-    single-particle STAR, which is silently wrong rather than an error.
+    starfile hands a loop-less block back as a plain dict, not a frame.
     """
     opt = _write_optimisation_set(
         tmp_path / "run_optimisation_set.star", block_name,
@@ -1055,8 +1041,7 @@ def test_a_file_that_is_not_an_optimisation_set_is_rejected(tomo_project):
 
 def test_loop_less_blocks_survive_a_plain_star_read(tmp_path):
     """
-    A non-tomography STAR with a loop-less block used to crash the label converter
-    with AttributeError: 'dict' object has no attribute 'columns'.
+    A non-tomography STAR with a loop-less block must still read.
     """
     path = tmp_path / "mixed.star"
     parts = pd.DataFrame({"rlnImageName": ["1@a.mrcs", "2@a.mrcs"],
@@ -1072,10 +1057,7 @@ def test_loop_less_blocks_survive_a_plain_star_read(tmp_path):
 def test_subtomogram_matrix_multiplies_on_the_left(tomo_project, tmp_path):
     """
     RELION composes ``A_subtomogram * A_particle`` (ParticleSet::getMatrix3x3), so the
-    order matters as soon as the subtomogram orientation is not the identity -- which
-    is exactly the case for particles extracted by Warp and then refined in RELION.
-    The main fixture carries no rlnTomoSubtomogram*, so it cannot tell the two orders
-    apart; this test adds them and pins the order.
+    order matters once the subtomogram orientation is not the identity.
     """
     rng = np.random.default_rng(11)
     parts = starfile.read(tomo_project["particles"], always_dict=True)
@@ -1109,8 +1091,7 @@ def test_subtomogram_matrix_multiplies_on_the_left(tomo_project, tmp_path):
                                           r["rlnAnglePsi"])
             assert np.allclose(got, geom.projection[i][:3, :3] @ A_sub @ A_part,
                                atol=1e-9), (label, i)
-            # and the reversed composition must be genuinely different, or the test
-            # would pass for the wrong reason
+            # the reversed composition must differ, or the test would pass for the wrong reason
             if not np.allclose(A_sub @ A_part, A_part @ A_sub, atol=1e-6):
                 wrong_order_seen = True
     assert wrong_order_seen, "the fixture failed to make the two orders distinguishable"
@@ -1122,8 +1103,7 @@ def test_subtomogram_matrix_multiplies_on_the_left(tomo_project, tmp_path):
 
 @pytest.fixture
 def relion_project_layout(tomo_project, tmp_path):
-    """A RELION-shaped project: the star file two job directories below the root, with
-    rlnImageName written relative to the root rather than to the star file."""
+    """A RELION-shaped project: star file two job directories below the root."""
     import mrcfile
 
     root = tmp_path / "project"
@@ -1150,9 +1130,7 @@ def relion_project_layout(tomo_project, tmp_path):
 def test_image_paths_resolve_from_any_working_directory(relion_project_layout, monkeypatch,
                                                         tmp_path):
     """
-    RELION anchors rlnImageName at the project root, so 'Extract/job010/Particles/1.mrcs'
-    in a star file living in Refine3D/job012/ is relative to neither the star file's own
-    directory nor whatever directory the program happens to be run from.
+    RELION anchors rlnImageName at the project root, not at the star file's directory.
     """
     layout = relion_project_layout
     elsewhere = tmp_path / "somewhere_else"
@@ -1196,10 +1174,8 @@ def test_write_rebases_project_relative_paths(relion_project_layout, monkeypatch
 
 def test_data_general_block_does_not_derail_the_read(tomo_project, tmp_path):
     """
-    RELION-5's Extract writes a loop-less ``data_general`` block carrying
-    ``rlnTomoSubTomosAre2DStacks``. It has to be read past, not tripped over -- and it is
-    written by hand here because starfile 0.5.13 silently drops a loop-less block on
-    write, so a fixture built with starfile alone would not test anything.
+    RELION-5's Extract writes a loop-less ``data_general`` block, which has to be read
+    past. Written by hand because starfile drops a loop-less block on write.
     """
     parts = starfile.read(tomo_project["particles"], always_dict=True)
     path = tmp_path / "particles_general.star"

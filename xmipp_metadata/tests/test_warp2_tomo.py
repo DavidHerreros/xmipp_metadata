@@ -28,20 +28,9 @@
 """
 Warp 2.x / WarpTools ``ts_export_particles --2d`` output.
 
-Unlike Warp 1.x / M, this writes a RELION-5 *shaped* pair of files, so it goes
-through the RELION converter rather than the Warp adapter.  The fixture below
-reproduces the exact column set WarpTools emits, taken from
-``TiltSeries.ReconstructParticleSeries.cs`` and
-``ExportParticlesTiltseries.cs``:
-
-  particles  -- rlnTomoName (with a ``.tomostar`` suffix), rlnTomoParticleId,
-                rlnCoordinateX/Y/Z (in *binned* pixels), rlnAngleRot/Tilt/Psi,
-                rlnTomoParticleName, rlnOpticsGroup (a *string*), rlnImageName
-                (no ``index@`` prefix), rlnOriginX/Y/ZAngst (hard zero),
-                rlnTomoVisibleFrames. No optics block.
-  tomograms  -- a global block with no rlnTomoTiltSeriesStarFile, followed by
-                per-tomogram blocks carrying rlnTomoProjX/Y/Z/W rather than
-                rlnTomoXTilt/YTilt/ZRot.
+Warp writes the tilt-series geometry as ``rlnTomoProj*`` 4x4 matrices with a literal zero
+translation column, no optics block, and a string rlnOpticsGroup. These tests pin the
+reading of that shape against the same RELION algebra the RELION-5 tests use.
 """
 
 import numpy as np
@@ -85,8 +74,7 @@ def _write_project(tmp_path, tomo_names=("TS_01.tomostar", "TS_02.tomostar"),
             rng.uniform(-30, 30, N_TILTS),
             APIX, (W, H, D), (W, H))
         if rotation_only:
-            # WarpTools writes `[{M11},{M12},{M13},0]` and `[0,0,0,1]` -- a pure
-            # rotation, with no specimen centre, image centre or per-tilt shift
+            # WarpTools writes `[{M11},{M12},{M13},0]` and `[0,0,0,1]`: a pure rotation
             proj = proj.copy()
             proj[:, :3, 3] = 0.0
         projections[tomo] = proj
@@ -140,8 +128,7 @@ def _write_project(tmp_path, tomo_names=("TS_01.tomostar", "TS_02.tomostar"),
                 "rlnTomoParticleName": f"{root}/{p + 1}",
                 "rlnOpticsGroup": root,                     # a string, as Warp writes
                 "rlnImageName": f"particleseries/{root}_{p + 1:06d}.mrcs",
-                # WarpTools writes these as a hard 0.0; a refinement run on top of the
-                # exported stacks is what makes them non-zero
+                # WarpTools writes these as a hard 0.0; a later refinement makes them non-zero
                 "rlnOriginXAngst": rng.uniform(-12, 12) if refined_origins else 0.0,
                 "rlnOriginYAngst": rng.uniform(-12, 12) if refined_origins else 0.0,
                 "rlnOriginZAngst": rng.uniform(-12, 12) if refined_origins else 0.0,
@@ -205,11 +192,7 @@ def test_conversion_matches_the_warp_geometry(warp2_project):
     assert np.allclose(df["rlnOriginYAngst"], 0.0)
 
     parts = starfile.read(warp2_project["particles"], always_dict=True)["particles"]
-    # Compare against the matrices as *read back*. Warp writes rlnTomoProj* with six
-    # decimals, so they are not exactly orthonormal, and an Euler triplet can only
-    # represent a proper rotation -- the pose is therefore the nearest rotation to
-    # R_f @ A_part. That residual is a property of the file format, not of the
-    # conversion, so the test bounds it by the matrices' own non-orthonormality.
+    # Six-decimal rlnTomoProj* are not exactly orthonormal, so bound the residual by that
     proj = read_tomograms_star(warp2_project["tomograms"])["TS_01.tomostar"].projection
     R = proj[:, :3, :3]
     non_orthonormality = np.abs(R @ np.swapaxes(R, -1, -2) - np.eye(3)).max()
@@ -326,10 +309,8 @@ def test_full_matrices_do_not_trigger_the_guard(tmp_path):
 
 def test_refined_origins_on_warp_geometry(tmp_path):
     """
-    The real downstream case: RELION refines on top of Warp's exported 2D stacks, so the
-    origins become non-zero while the geometry stays rotation-only. shifts='from_origin'
-    must work there, and must be what the default picks -- this is the configuration where
-    the old default silently discarded the whole translational refinement.
+    RELION refining on top of Warp's exported 2D stacks: non-zero origins on a
+    rotation-only geometry. 'from_origin' must work there and must be what auto picks.
     """
     project = _write_project(tmp_path, refined_origins=True)
 

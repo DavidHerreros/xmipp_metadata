@@ -158,8 +158,7 @@ def main(path):
 
     print(f"  {len(df)} rows, {int(df['subtomo_labels'].max())} particles")
 
-    # across particles at one frame: must be wide, or the particle orientation is
-    # not reaching the output and every particle averages in the same frame
+    # across particles at one frame: must be wide, or the pose is not reaching the output
     f0 = df["rlnTomoFrameIndex"].mode().iloc[0]
     one = df[df["rlnTomoFrameIndex"] == f0]
     spread = one[["rlnAngleRot", "rlnAngleTilt", "rlnAnglePsi"]].std().to_numpy()

@@ -279,6 +279,7 @@ def build(args):
     vol_unb = phantom(box_unb, apix_ts)
     truth = phantom(box, apix_img)
 
+    tilts = (np.zeros((F, H, W), np.float32) if args.write_tilt_series else None)
     stacks, true_poses = {}, []
     print(f"rendering {M} particles x {F} tilts at box {box_unb} -> {box} ...")
     for p in range(M):
@@ -291,9 +292,8 @@ def build(args):
             centre_crop = (P[f] @ np.append(coord[p], 1.0))[:2]
             d = (centre_true - centre_crop) / binning        # in output pixels
 
-            img = integrate_along_beam(vol_unb, R_tot)
-            img = fourier_crop(img, box)
-            img = shift_image(img, d[0], d[1])
+            raw = integrate_along_beam(vol_unb, R_tot)
+            img = shift_image(fourier_crop(raw, box), d[0], d[1])
 
             depth = (P[f] @ np.append(true_pos[p], 1.0))[2]
             dz = hand * apix_ts * depth
@@ -303,7 +303,27 @@ def build(args):
 
             # The stored image is what an extraction writes: the observation, damped by
             # radiation damage, then pre-multiplied by the same CTF*W matched filter.
-            frames[f] = apply_in_fourier(img, (c * w) ** 2)
+            # Pre-multiplied is what RELION's and Warp's extractions actually write, but
+            # a plain observation lets RELION's own single-particle reconstructor be
+            # pointed at the converted metadata without hand-editing an optics flag.
+            frames[f] = apply_in_fourier(img, (c * w) ** 2 if args.premultiply else c * w)
+
+            if tilts is not None:
+                # The tilt image holds the *observation*, filtered by CTF*W once and not
+                # pre-multiplied -- that is what a microscope produces and what RELION or
+                # Warp expect to extract from. Rendered unbinned, at the tilt-series
+                # sampling, and dropped in at the particle's true projected position.
+                cu = ctf(box_unb, apix_ts, defocus_u[f] + dz, defocus_v[f] + dz,
+                         defocus_ang[f], args.kv, args.cs, args.q0, scale=scalefactor[f])
+                wu = dose_weight(box_unb, apix_ts, pre_exposure[f]) if args.dose_weighting else 1.0
+                base = np.rint(centre_true).astype(int)
+                sub = centre_true - base
+                patch = apply_in_fourier(shift_image(raw, sub[0], sub[1]), cu * wu)
+                x0, y0 = base[0] - box_unb // 2, base[1] - box_unb // 2
+                xs, ys = slice(max(x0, 0), min(x0 + box_unb, W)), slice(max(y0, 0), min(y0 + box_unb, H))
+                px, py = slice(xs.start - x0, xs.stop - x0), slice(ys.start - y0, ys.stop - y0)
+                if xs.stop > xs.start and ys.stop > ys.start:
+                    tilts[f, ys, xs] += patch[py, px]
             if args.snr > 0:
                 frames[f] += rng.normal(0.0, frames[f].std() / np.sqrt(args.snr),
                                         frames[f].shape).astype(np.float32)
@@ -346,8 +366,17 @@ def write_relion(d, out):
     F, M = d["F"], d["M"]
     name = "TS_01"
 
+    tilt_rel = None
+    if d["tilts"] is not None:
+        os.makedirs(os.path.join(out, "tilt_series"), exist_ok=True)
+        tilt_rel = f"tilt_series/{name}.mrcs"
+        with mrcfile.new(os.path.join(out, tilt_rel), overwrite=True) as m:
+            m.set_data(d["tilts"].astype(np.float32))
+            m.voxel_size = d["apix_ts"]
+
     ts = pd.DataFrame({
-        "rlnMicrographName": [f"frames/{name}_{f:03d}.mrc" for f in range(F)],
+        "rlnMicrographName": [f"{f + 1:06d}@{tilt_rel}" if tilt_rel
+                              else f"frames/{name}_{f:03d}.mrc" for f in range(F)],
         "rlnTomoXTilt": d["x_tilt"],
         "rlnTomoYTilt": d["y_tilt"],
         "rlnTomoZRot": d["z_rot"],
@@ -373,6 +402,7 @@ def write_relion(d, out):
         "rlnTomoHand": d["hand"],
         "rlnTomoSizeX": d["W"], "rlnTomoSizeY": d["H"], "rlnTomoSizeZ": d["args"].tomo_z,
         "rlnTomoTiltSeriesStarFile": ts_rel,
+        "rlnTomoTiltSeriesName": tilt_rel if tilt_rel else "tilt_series/TS_01.mrcs",
         "rlnOpticsGroupName": "opticsGroup1",
         "rlnTomoImportFractionalDose": d["args"].dose_per_tilt,
     }])
@@ -417,7 +447,7 @@ def write_relion(d, out):
         "rlnImageSize": d["box"],
         "rlnImageDimensionality": 2,
         "rlnTomoSubtomogramBinning": float(d["binning"]),
-        "rlnCtfDataAreCtfPremultiplied": 1,
+        "rlnCtfDataAreCtfPremultiplied": int(d["args"].premultiply),
     }])
     parts_rel = "Extract/job002/particles.star"
     starfile.write({"optics": optics, "particles": parts},
@@ -429,6 +459,17 @@ def write_relion(d, out):
     with open(os.path.join(out, "Extract/job002/optimisation_set.star"), "w") as fh:
         fh.write("\n".join(opt))
     return "Extract/job002/optimisation_set.star"
+
+
+def _warp_tilt_stack(d, out):
+    if d["tilts"] is None:
+        return "tiltstack/TS_01/TS_01.mrc"
+    os.makedirs(os.path.join(out, "tiltstack/TS_01"), exist_ok=True)
+    rel = "tiltstack/TS_01/TS_01.mrc"
+    with mrcfile.new(os.path.join(out, rel), overwrite=True) as m:
+        m.set_data(d["tilts"].astype(np.float32))
+        m.voxel_size = d["apix_ts"]
+    return rel
 
 
 def write_warp(d, out):
@@ -452,7 +493,7 @@ def write_warp(d, out):
     })
     glob = pd.DataFrame([{
         "rlnTomoName": name,
-        "rlnTomoTiltSeriesName": "tiltstack/TS_01/TS_01.mrc",
+        "rlnTomoTiltSeriesName": _warp_tilt_stack(d, out),
         "rlnTomoFrameCount": F,
         "rlnTomoSizeX": d["W"], "rlnTomoSizeY": d["H"], "rlnTomoSizeZ": d["args"].tomo_z,
         "rlnTomoHand": d["hand"],
@@ -495,7 +536,7 @@ def write_warp(d, out):
         "rlnImagePixelSize": d["apix_img"],
         "rlnImageSize": d["box"],
         "rlnImageDimensionality": 2,
-        "rlnCtfDataAreCtfPremultiplied": 1,
+        "rlnCtfDataAreCtfPremultiplied": int(d["args"].premultiply),
     }])
     parts_rel = "matching.star"
     starfile.write({"optics": optics, "particles": parts},
@@ -516,6 +557,8 @@ def write_ground_truth(d, out, entry):
              shift_x=poses[:, 5], shift_y=poses[:, 6], apix=d["apix_img"],
              box=d["box"])
 
+    ctf_mode = "premultiplied" if d["args"].premultiply else "apply"
+    have_tilts = d["tilts"] is not None
     readme = f"""# Synthetic {d['args'].flavour} tilt-series data set
 
 Ground truth: `ground_truth/phantom.mrc` ({d['box']}^3 at {d['apix_img']:.3f} A/px).
@@ -527,29 +570,74 @@ own algebra transcribed through scipy, and the images are rendered in real space
 
     particles      : {entry}
     tilts          : {d['F']}   particles: {d['M']}
-    tilt-series px : {d['apix_ts']:.3f} A      binning: {d['binning']}  -> {d['apix_img']:.3f} A/px
+    tilt-series px : {d['apix_ts']:.3f} A      binning: {d['binning']} -> {d['apix_img']:.3f} A/px
+    tilt images    : {"tilt_series/ (rendered)" if have_tilts else "NOT rendered (pass --write-tilt-series)"}
     handedness     : {d['hand']:+.0f}
     origins        : refined up to {d['args'].origin_error:.1f} A after extraction
-    premultiplied  : yes, by (CTF * dose weight)^2
+    stored images  : {"pre-multiplied by (CTF*W)^2" if d['args'].premultiply else "plain CTF*W observations"}
     noise          : {'SNR ' + str(d['args'].snr) if d['args'].snr > 0 else 'none'}
 
-## Reconstruct
+Run everything below from THIS directory: the star files use project-relative paths,
+exactly as RELION writes them.
+
+## 1. hax
 
     hax_project_manager --gpu 0 reconstruct_volume --md {entry} \\
-        --sr {d['apix_img']:.4f} --ctf_type premultiplied --no_denoise
+        --sr {d['apix_img']:.4f} --ctf_type {ctf_mode} --no_denoise
 
-## Check
-
-    python compare_volumes.py ground_truth/phantom.mrc \\
+    python /path/to/tools/compare_volumes.py ground_truth/phantom.mrc \\
         consensus_reconstruction.mrc --apix {d['apix_img']:.4f}
 
-FSC ~ 1.0 to Nyquist means the conventions agree. Disagreement from the lowest shells
-is a pose or shift convention error; a high correlation only after mirroring means the
-handedness is inverted.
+## 2. The metadata alone, no GPU
 
-`ground_truth/poses.npz` holds the per-tilt-image pose actually used to render each
-image. Reconstructing from those instead proves the renderer is self-consistent, which
-separates "the converter is wrong" from "the test is wrong".
+    python /path/to/tools/validate_synthetic.py .
+
+Two stages: from the poses the images were rendered with, then from the poses the
+converter derives. The second reproducing the first is the actual test. Use
+`--break transpose|mirror|drop-shifts|swap-rot-psi` to confirm it can fail.
+
+## 3. RELION reconstructing the same data itself
+{"" if have_tilts else "   (regenerate with --write-tilt-series first -- RELION extracts from the tilt images)"}
+    relion_tomo_reconstruct_particle --i {entry} --o Reconstruct/ \\
+        --b {d['box']} --crop {d['box']} --bin {d['binning']} --sym C1 --j 8
+
+    python /path/to/tools/compare_volumes.py ground_truth/phantom.mrc \\
+        Reconstruct/merged.mrc --apix {d['apix_img']:.4f}
+
+If RELION reproduces the phantom from these files, they really are what RELION expects,
+and hax agreeing with RELION then means the conversion is right rather than merely
+self-consistent. This is the only step that tests the *files* rather than the reader.
+
+## 4. RELION's single-particle reconstructor on the converted metadata
+
+Needs no tilt images, and is the most direct statement that the conversion is correct in
+RELION's own convention -- RELION reads the per-tilt alignment this package produced:
+
+    python -c "
+    from xmipp_metadata.metadata import XmippMetaData
+    md = XmippMetaData('{entry}')
+    md.write('particles_tilts.star', updateImagePaths=True)"
+
+    relion_reconstruct --i particles_tilts.star --o relion_spa.mrc --ctf{"" if d['args'].premultiply else ""}
+
+Generate with `--no-premultiply` for this one: relion_reconstruct takes the
+pre-multiplied flag from the optics block, which the Xmipp-to-RELION writer does not
+carry through, so a pre-multiplied stack would be CTF-weighted twice.
+
+## 5. Warp
+
+Warp's role in this pipeline is export, not averaging -- the meaningful check for the
+warp flavour is step 3, RELION reconstructing from a Warp-shaped export, which is the
+real pipeline. Note this data set carries Warp's literal zero translation column in
+`rlnTomoProj*`, so anything needing that translation to place a particle will fail on
+it, exactly as it does on real WarpTools output.
+
+## Reading the result
+
+FSC ~ 1.0 to Nyquist means the conventions agree. Disagreement from the lowest shells is
+a pose or shift convention error; a high correlation only after mirroring means the
+handedness is inverted. Do not judge by correlation alone -- in the sabotage tests CC
+stayed above 0.92 for every corruption that the FSC caught.
 """
     with open(os.path.join(out, "README.md"), "w") as fh:
         fh.write(readme)
@@ -580,7 +668,12 @@ def main():
     p.add_argument("--subtomogram-angles", action="store_true",
                    help="also write rlnTomoSubtomogram*, so A_sub is not the identity")
     p.add_argument("--no-dose-weighting", dest="dose_weighting", action="store_false")
+    p.add_argument("--no-premultiply", dest="premultiply", action="store_false",
+                   help="store plain CTF*W observations instead of pre-multiplied ones")
     p.add_argument("--random-zrot", action="store_true")
+    p.add_argument("--write-tilt-series", action="store_true",
+                   help="also render the full tilt images, so RELION or Warp can run "
+                        "their own extraction and reconstruction on this data set")
     args = p.parse_args()
 
     d = build(args)

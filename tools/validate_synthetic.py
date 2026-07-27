@@ -21,6 +21,7 @@ import sys
 import warnings
 
 import numpy as np
+import starfile
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from make_synthetic_tomo import ctf as make_ctf, dose_weight  # noqa: E402  (shared definitions, not conventions)
@@ -37,8 +38,13 @@ def relion_matrix(rot, tilt, psi):
     return Rot.from_euler("ZYZ", [rot, tilt, psi], degrees=True).as_matrix().T
 
 
-def reconstruct(images, angles, shifts, weights, box):
-    """Wiener gridding: sum(stored) / sum(weight^2), with trilinear insertion."""
+def reconstruct(images, angles, shifts, weights, box, premultiplied=True):
+    """Wiener gridding with trilinear insertion.
+
+    The denominator is always sum((CTF*W)^2). The numerator depends on what the stack
+    holds: a pre-multiplied image already carries one factor of CTF*W, a plain
+    observation still needs it applied here.
+    """
     f0, f1 = _slice_grid(box)
     num = np.zeros((box,) * 3, np.complex128)
     den = np.zeros((box,) * 3, np.float64)
@@ -48,6 +54,8 @@ def reconstruct(images, angles, shifts, weights, box):
         # undo the stored translation, same sense as the reconstructor under test:
         # the content sits at (p - shift), so divide that phase out
         ft = ft * np.exp(-2j * np.pi * (sh[1] * f0 + sh[0] * f1) / box)
+        if not premultiplied:
+            ft = ft * w
 
         R = relion_matrix(*ang)
         kx = R[0, 0] * f1 + R[1, 0] * f0
@@ -160,6 +168,20 @@ def main():
                if "preExposure" in cols else 1.0)
             for i in range(n)]).astype(np.float64)
 
+        # Getting this wrong silently destroys the reconstruction, and a silent wrong
+        # answer is the failure this whole exercise exists to prevent -- so read it from
+        # the converted table, and fall back to scanning the file's own optics block.
+        premult = True
+        if md.isMetaDataLabel("rlnCtfDataAreCtfPremultiplied"):
+            premult = bool(int(md.getMetaDataColumns("rlnCtfDataAreCtfPremultiplied")[0]))
+        else:
+            for blk in starfile.read(star, always_dict=True).values():
+                labels = (blk.columns if hasattr(blk, "columns") else
+                          blk.index if hasattr(blk, "index") else blk.keys())
+                if "rlnCtfDataAreCtfPremultiplied" in labels:
+                    premult = bool(int(np.asarray(blk["rlnCtfDataAreCtfPremultiplied"]).ravel()[0]))
+                    break
+
         conv_ang = np.stack([md.getMetaDataColumns("angleRot"),
                              md.getMetaDataColumns("angleTilt"),
                              md.getMetaDataColumns("anglePsi")], axis=1)
@@ -167,11 +189,12 @@ def main():
                             md.getMetaDataColumns("shiftY")], axis=1)
     finally:
         os.chdir(cwd)
+    print(f"stored images: {'pre-multiplied' if premult else 'plain observations'}\n")
 
     print("stage 1 -- the renderer, using the poses the images were made with")
     gt_ang = np.stack([gt["rot"], gt["tilt"], gt["psi"]], axis=1)
     gt_sh = np.stack([gt["shift_x"], gt["shift_y"]], axis=1)
-    v1 = reconstruct(images, gt_ang, gt_sh, weights, box)
+    v1 = reconstruct(images, gt_ang, gt_sh, weights, box, premult)
     r1 = report("ground-truth poses", v1, truth)
 
     if args.sabotage:
@@ -186,7 +209,7 @@ def main():
             conv_ang = conv_ang[:, [2, 1, 0]]
 
     print("\nstage 2 -- the converter, using the poses it derived from the star file")
-    v2 = reconstruct(images, conv_ang, conv_sh, weights, box)
+    v2 = reconstruct(images, conv_ang, conv_sh, weights, box, premult)
     r2 = report("converted poses", v2, truth)
 
     print(f"\n  agreement between the two              "

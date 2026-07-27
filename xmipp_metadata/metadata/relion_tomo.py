@@ -1015,7 +1015,8 @@ def tomo_star_to_tilt_particles(
         trajectories=None,
         chunk_size=20000,
         keep_columns=("rlnRandomSubset", "rlnClassNumber", "rlnGroupNumber",
-                      "rlnOpticsGroup", "rlnTomoParticleName", "rlnTomoParticleId"),
+                      "rlnOpticsGroup", "rlnTomoParticleName", "rlnTomoParticleId",
+                      "rlnCtfDataAreCtfPremultiplied"),
 ):
     """
     Expand a RELION tomography particles STAR file into one row per

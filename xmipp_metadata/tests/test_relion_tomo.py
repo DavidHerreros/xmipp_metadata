@@ -604,10 +604,17 @@ def test_shift_modes(tomo_project):
         assert np.allclose(got_x, centre[..., 0].ravel(), atol=1e-9)
         assert np.allclose(got_y, centre[..., 1].ravel(), atol=1e-9)
 
-    # "auto" must pick "zero" here, because the input carries rlnTomoVisibleFrames
+    # The fixture has extracted 2D stacks AND non-zero origins, so "auto" must pick
+    # "from_origin": RELION's extraction zeroes the origin (subtomo.cpp writes
+    # setParticleOffset(new_id, d3Vector(0,0,0))), so one that is non-zero here can only
+    # have been refined afterwards and has to be projected onto each tilt.
     auto = tomo_star_to_tilt_particles(tomo_project["particles"],
                                         tomo_project["tomograms"], **common)
-    assert np.allclose(auto["rlnOriginXAngst"], 0.0)
+    from_origin = tomo_star_to_tilt_particles(tomo_project["particles"],
+                                              tomo_project["tomograms"],
+                                              shifts="from_origin", **common)
+    pd.testing.assert_frame_equal(auto, from_origin)
+    assert not np.allclose(auto["rlnOriginXAngst"], 0.0)
 
 
 def test_shift_units_pixel(tomo_project):
@@ -915,10 +922,35 @@ def test_from_origin_is_a_no_op_without_origins(tomo_project, tmp_path):
 
 
 def test_dropping_refined_origins_is_flagged(tomo_project):
+    """Asking for shifts='zero' explicitly still throws the refinement away -- say so."""
     with pytest.warns(RuntimeWarning, match="shifts='from_origin'"):
         tomo_star_to_tilt_particles(
-            tomo_project["particles"], tomo_project["tomograms"],
+            tomo_project["particles"], tomo_project["tomograms"], shifts="zero",
             tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+
+
+def test_auto_does_not_drop_refined_origins(tomo_project, recwarn):
+    """The default must not silently discard a refinement -- that was the old behaviour."""
+    df = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    assert np.abs(df["rlnOriginXAngst"].to_numpy()).max() > 0
+    assert not [w for w in recwarn if "discarded" in str(w.message)]
+
+
+def test_auto_picks_zero_when_there_is_nothing_to_apply(tomo_project, tmp_path):
+    """With the origins genuinely zero, auto must not invent a shift."""
+    parts = starfile.read(tomo_project["particles"], always_dict=True)
+    for c in ("rlnOriginXAngst", "rlnOriginYAngst", "rlnOriginZAngst"):
+        parts["particles"][c] = 0.0
+    path = tmp_path / "particles_no_origin.star"
+    starfile.write(parts, path, overwrite=True)
+
+    df = tomo_star_to_tilt_particles(
+        path, tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    assert np.allclose(df["rlnOriginXAngst"], 0.0)
+    assert np.allclose(df["rlnOriginYAngst"], 0.0)
 
 
 def test_visibility_is_honoured(tomo_project, tmp_path):
@@ -1035,3 +1067,128 @@ def test_loop_less_blocks_survive_a_plain_star_read(tmp_path):
     md = XmippMetaData(str(path))
     assert not md.isTomo
     assert len(md) == 2
+
+
+def test_subtomogram_matrix_multiplies_on_the_left(tomo_project, tmp_path):
+    """
+    RELION composes ``A_subtomogram * A_particle`` (ParticleSet::getMatrix3x3), so the
+    order matters as soon as the subtomogram orientation is not the identity -- which
+    is exactly the case for particles extracted by Warp and then refined in RELION.
+    The main fixture carries no rlnTomoSubtomogram*, so it cannot tell the two orders
+    apart; this test adds them and pins the order.
+    """
+    rng = np.random.default_rng(11)
+    parts = starfile.read(tomo_project["particles"], always_dict=True)
+    n = len(parts["particles"])
+    sub = {"rlnTomoSubtomogramRot": rng.uniform(-180, 180, n),
+           "rlnTomoSubtomogramTilt": rng.uniform(0, 180, n),
+           "rlnTomoSubtomogramPsi": rng.uniform(-180, 180, n)}
+    for k, v in sub.items():
+        parts["particles"][k] = v
+    path = tmp_path / "particles_with_subtomo.star"
+    starfile.write(parts, path, overwrite=True)
+
+    df = tomo_star_to_tilt_particles(
+        path, tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+
+    geoms = read_tomograms_star(tomo_project["tomograms"],
+                                tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    wrong_order_seen = False
+    for label in (1, 6, 14):
+        p = parts["particles"].iloc[label - 1]
+        geom = geoms[p["rlnTomoName"]]
+        A_part = _relion_euler_angles2matrix(p["rlnAngleRot"], p["rlnAngleTilt"],
+                                             p["rlnAnglePsi"])
+        A_sub = _relion_euler_angles2matrix(p["rlnTomoSubtomogramRot"],
+                                            p["rlnTomoSubtomogramTilt"],
+                                            p["rlnTomoSubtomogramPsi"])
+        rows = df[df["subtomo_labels"] == label].sort_values("rlnTomoFrameIndex")
+        for i, (_, r) in enumerate(rows.iterrows()):
+            got = relion_angles_to_matrix(r["rlnAngleRot"], r["rlnAngleTilt"],
+                                          r["rlnAnglePsi"])
+            assert np.allclose(got, geom.projection[i][:3, :3] @ A_sub @ A_part,
+                               atol=1e-9), (label, i)
+            # and the reversed composition must be genuinely different, or the test
+            # would pass for the wrong reason
+            if not np.allclose(A_sub @ A_part, A_part @ A_sub, atol=1e-6):
+                wrong_order_seen = True
+    assert wrong_order_seen, "the fixture failed to make the two orders distinguishable"
+
+
+# --------------------------------------------------------------------------- #
+#  Project-relative image paths
+# --------------------------------------------------------------------------- #
+
+@pytest.fixture
+def relion_project_layout(tomo_project, tmp_path):
+    """A RELION-shaped project: the star file two job directories below the root, with
+    rlnImageName written relative to the root rather than to the star file."""
+    import mrcfile
+
+    root = tmp_path / "project"
+    (root / "Refine3D" / "job012").mkdir(parents=True)
+    (root / "Extract" / "job010" / "Particles").mkdir(parents=True)
+
+    parts = starfile.read(tomo_project["particles"], always_dict=True)
+    n, F = tomo_project["n"], tomo_project["n_frames"]
+    names = []
+    for i in range(n):
+        rel = f"Extract/job010/Particles/{i + 1}.mrcs"
+        with mrcfile.new(root / rel, overwrite=True) as m:
+            m.set_data(np.zeros((F, tomo_project["box"], tomo_project["box"]), np.float32))
+        names.append(rel)
+    parts["particles"]["rlnImageName"] = names
+
+    particles = root / "Refine3D" / "job012" / "run_data.star"
+    starfile.write(parts, particles, overwrite=True)
+    opt = _write_optimisation_set(root / "Refine3D" / "job012" / "run_optimisation_set.star",
+                                  "optimisation_set", particles, tomo_project["tomograms"])
+    return dict(root=root, optimisation_set=opt, n=n, n_frames=F)
+
+
+def test_image_paths_resolve_from_any_working_directory(relion_project_layout, monkeypatch,
+                                                        tmp_path):
+    """
+    RELION anchors rlnImageName at the project root, so 'Extract/job010/Particles/1.mrcs'
+    in a star file living in Refine3D/job012/ is relative to neither the star file's own
+    directory nor whatever directory the program happens to be run from.
+    """
+    layout = relion_project_layout
+    elsewhere = tmp_path / "somewhere_else"
+    elsewhere.mkdir()
+
+    for cwd in (layout["root"], elsewhere, tmp_path):
+        monkeypatch.chdir(cwd)
+        md = XmippMetaData(str(layout["optimisation_set"]))
+        assert md.binaries, f"stacks not found with cwd={cwd}"
+        assert md.getMetaDataImage(0).shape[-1] == 64
+        assert len(md) == layout["n"] * layout["n_frames"]
+
+
+def test_missing_stacks_say_why(relion_project_layout, monkeypatch, tmp_path):
+    """A genuinely absent stack must still report cleanly, and name the convention."""
+    layout = relion_project_layout
+    for f in (layout["root"] / "Extract" / "job010" / "Particles").glob("*.mrcs"):
+        f.unlink()
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.warns(RuntimeWarning, match="project root"):
+        md = XmippMetaData(str(layout["optimisation_set"]))
+    assert not md.binaries
+
+
+def test_write_rebases_project_relative_paths(relion_project_layout, monkeypatch, tmp_path):
+    """updateImagePaths must re-point the paths from the project root to the new file."""
+    layout = relion_project_layout
+    monkeypatch.chdir(tmp_path)
+    md = XmippMetaData(str(layout["optimisation_set"]))
+
+    out = tmp_path / "out" / "tilts.xmd"
+    out.parent.mkdir()
+    md.write(str(out), updateImagePaths=True)
+
+    monkeypatch.chdir(out.parent)
+    again = XmippMetaData(str(out))
+    assert again.binaries, "the rewritten paths do not resolve from the new location"
+    assert again.getMetaDataImage(0).shape[-1] == 64

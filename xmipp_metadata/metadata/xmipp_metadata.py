@@ -29,6 +29,8 @@ import numpy as np
 
 import os
 
+import warnings
+
 from functools import lru_cache
 
 from pathlib import Path
@@ -113,6 +115,12 @@ class XmippMetaData(object):
         # ``None`` for metadata built in-memory (no source file), in which case the CWD is
         # used as a best-effort fallback.
         self._source_dir = None
+        # Directory relative image paths actually resolve against. RELION writes them
+        # relative to the *project root*, which is neither the CWD nor the directory the
+        # star file sits in: a refinement's run_data.star lives in Refine3D/jobNNN/ but
+        # points at Extract/jobNNN/Particles/... ``_findImageRoot`` locates it by testing
+        # where the stacks really are, so reading works from any working directory.
+        self._image_root = None
         # True once a tomography STAR file has been expanded to one row per tilt
         # image. Consumers can branch on it instead of sniffing for columns;
         # tomoFormat says which flavour it came from ("relion" or "warp").
@@ -288,16 +296,76 @@ class XmippMetaData(object):
         Shared tail of every read path: probe the binaries and pad the table with the
         default columns that downstream code assumes are present.
         '''
+        self._image_root = self._findImageRoot()
+
         try:
             self.binaries = True
             _ = self.getMetaDataImage(0)
         except (FileNotFoundError, KeyError):
             self.binaries = False
+            # Saying only "not found" sends people hunting for a copying mistake when the
+            # real answer is almost always that the paths are project-relative and the root
+            # is not on the list of places tried.
+            if self.isMetaDataLabel("image") and len(self):
+                sample = str(self.getMetadataItems(0, "image")[0])
+                warnings.warn(
+                    f"no image stack found for '{sample}'. RELION writes rlnImageName "
+                    f"relative to the project root; the root was looked for at the current "
+                    f"directory and at {self._source_dir} and its parents. Run from the "
+                    f"project root, or pass absolute paths.", RuntimeWarning)
 
         # Fill non-existing columns
         remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
         for label in remain:
             self.table[label] = 0.0
+
+    def _findImageRoot(self, probe_rows=8):
+        '''
+        Locate the directory that relative image paths are relative to.
+
+        RELION anchors rlnImageName at the project root, so a star file two job
+        directories deep still says ``Extract/job010/Particles/x.mrcs``. Rather than
+        guessing which convention a given file follows, the candidate roots are tried
+        against paths that are actually in the table and the first one where the stacks
+        exist wins. Several rows are probed, not one, so a single missing file does not
+        pick the wrong root.
+
+            :returns: absolute directory to join relative image paths onto
+        '''
+        cwd = os.getcwd()
+        if not self.isMetaDataLabel("image") or not len(self):
+            return cwd
+
+        paths = []
+        for i in range(min(int(probe_rows), len(self))):
+            path = str(self.getMetadataItems(i, "image")[0]).split("@")[-1]
+            if not os.path.isabs(path):
+                paths.append(path)
+        if not paths:
+            return cwd
+
+        candidates = [cwd]
+        if self._source_dir is not None:
+            d = self._source_dir
+            # A job's star file sits at <root>/<JobType>/jobNNN/, so the root is two levels
+            # up; walk a little further for projects nested deeper than that.
+            for _ in range(4):
+                candidates.append(d)
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
+
+        for base in candidates:
+            if all(os.path.exists(os.path.join(base, p)) for p in paths):
+                return base
+        return cwd
+
+    def _resolveImagePath(self, path):
+        '''Absolute path of one stack referenced by the metadata.'''
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self._image_root or os.getcwd(), path)
 
     @staticmethod
     def _sniffTomoKind(file_name, max_lines=5000):
@@ -357,13 +425,12 @@ class XmippMetaData(object):
             except ValueError as e:
                 index, file = "", image
 
-            # Image absolute path. A relative path is defined relative to the directory the
-            # metadata was read from (``_source_dir``), NOT the process CWD -- resolving it
-            # against CWD would silently point to the wrong stack whenever the program runs
-            # from elsewhere. Fall back to CWD only for in-memory metadata with no source.
+            # Image absolute path. A relative path is resolved against the project root
+            # found at read time (``_image_root``), not against the CWD and not against the
+            # star file's own directory -- RELION anchors rlnImageName at the project root,
+            # which for a job's star file is two directories above it.
             if not os.path.isabs(file):
-                base = self._source_dir if self._source_dir is not None else os.getcwd()
-                file = os.path.abspath(os.path.join(base, file))
+                file = os.path.abspath(self._resolveImagePath(file))
 
             # Get new relative path
             file = Path(file).resolve()
@@ -501,7 +568,7 @@ class XmippMetaData(object):
         # of being stacked and then reordered
         images = None
         for key, values in stack_id.items():
-            ih = getImageHandler(key)
+            ih = getImageHandler(self._resolveImagePath(key))
             positions = np.asarray(stack_order[key])
 
             if len(ih) == len(values) == 1:

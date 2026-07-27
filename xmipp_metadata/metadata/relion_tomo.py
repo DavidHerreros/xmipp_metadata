@@ -1078,7 +1078,13 @@ def tomo_star_to_tilt_particles(
         :param binning (float - Optional) --> output pixel size / unbinned tilt-series
                pixel size. Defaults to rlnImagePixelSize / rlnTomoTiltSeriesPixelSize,
                falling back to 1.0
-        :param shifts (string) --> "auto", "zero" or "residual"
+        :param shifts (string) --> how the per-tilt 2D shift is filled in:
+               "residual" reports the sub-pixel remainder of a crop the caller still has to
+               make; "from_origin" projects a 3D origin that was refined after extraction
+               onto each tilt; "zero" leaves it empty. "auto" (the default) picks
+               "residual" when nothing has been extracted yet, "from_origin" when extracted
+               2D stacks come with a non-zero origin, and "zero" otherwise -- see the
+               comment at the selection for why that is a deduction rather than a guess
         :param shift_units (string) --> "angstrom" writes rlnOriginX/YAngst, RELION's
                own convention; "pixel" writes rlnOriginX/Y in *output* pixels instead,
                for consumers that expect pixels
@@ -1186,26 +1192,36 @@ def tomo_star_to_tilt_particles(
 
     has_stack2d = "rlnTomoVisibleFrames" in parts.columns
     requested_shifts = shifts
+
+    origin_cols = [c for c in ("rlnOriginXAngst", "rlnOriginYAngst",
+                               "rlnOriginZAngst") if c in parts.columns]
+    largest_origin = (float(np.abs(parts[origin_cols].to_numpy(dtype=np.float64)).max())
+                      if origin_cols else 0.0)
+
     if shifts == "auto":
-        shifts = "zero" if has_stack2d else "residual"
+        if not has_stack2d:
+            # Nothing has been extracted yet, so the caller still has to crop: report where
+            # to crop and what is left over after rounding.
+            shifts = "residual"
+        elif largest_origin > 1e-6:
+            # RELION's extraction *consumes* the origin -- ``subtomo.cpp`` folds it into the
+            # coordinate and then writes ``setParticleOffset(new_id, d3Vector(0,0,0))``. So a
+            # non-zero origin sitting next to already-extracted 2D stacks can only have been
+            # refined afterwards, and projecting it onto each tilt is the only reading that
+            # is not simply wrong. There is no ambiguity here to be careful about: the
+            # alternative silently throws away the whole translational refinement.
+            shifts = "from_origin"
+        else:
+            shifts = "zero"
 
     # Dropping a refined origin is silent and expensive -- the map just comes out worse --
-    # so say so loudly when the input looks like a refinement on top of extracted stacks.
-    if shifts == "zero":
-        origin_cols = [c for c in ("rlnOriginXAngst", "rlnOriginYAngst",
-                                   "rlnOriginZAngst") if c in parts.columns]
-        if origin_cols:
-            largest = float(np.abs(parts[origin_cols].to_numpy(dtype=np.float64)).max())
-            if largest > 1e-6:
-                how = ("auto-selected" if requested_shifts == "auto" else "requested")
-                warnings.warn(
-                    f"shifts='zero' ({how}) but the particles carry non-zero origin "
-                    f"shifts (up to {largest:.3g} A). If those were refined *after* the "
-                    f"2D stacks were extracted -- which is what a refinement run on "
-                    f"extracted stacks produces -- they are being discarded, and the "
-                    f"whole translational part of that refinement with them. Pass "
-                    f"shifts='from_origin' to project them onto each tilt instead.",
-                    RuntimeWarning)
+    # so say so loudly if it was asked for explicitly.
+    if shifts == "zero" and largest_origin > 1e-6:
+        warnings.warn(
+            f"shifts='zero' was requested but the particles carry non-zero origin shifts "
+            f"(up to {largest_origin:.3g} A), which are being discarded along with the "
+            f"whole translational part of the refinement that produced them. "
+            f"shifts='from_origin' projects them onto each tilt instead.", RuntimeWarning)
     if visibility == "auto":
         visibility = "stored" if has_stack2d else "computed"
     if visibility == "stored" and not has_stack2d:

@@ -328,13 +328,19 @@ def test_refined_origins_on_warp_geometry(tmp_path):
     """
     The real downstream case: RELION refines on top of Warp's exported 2D stacks, so the
     origins become non-zero while the geometry stays rotation-only. shifts='from_origin'
-    must work there -- and the default must not silently throw the refinement away.
+    must work there, and must be what the default picks -- this is the configuration where
+    the old default silently discarded the whole translational refinement.
     """
     project = _write_project(tmp_path, refined_origins=True)
 
-    # the default would discard the refinement, and has to say so
+    # the default has to keep the refinement, without being asked
+    default = tomo_star_to_tilt_particles(project["particles"], project["tomograms"])
+    assert np.abs(default["rlnOriginXAngst"]).max() > 1e-3
+
+    # asking for 'zero' still drops it, and still has to say so
     with pytest.warns(RuntimeWarning, match="shifts='from_origin'"):
-        dropped = tomo_star_to_tilt_particles(project["particles"], project["tomograms"])
+        dropped = tomo_star_to_tilt_particles(project["particles"], project["tomograms"],
+                                              shifts="zero")
     assert np.allclose(dropped["rlnOriginXAngst"], 0.0)
 
     # 'residual' is still refused: it needs absolute positions this geometry cannot give
@@ -345,6 +351,7 @@ def test_refined_origins_on_warp_geometry(tmp_path):
     # 'from_origin' works, because it only ever projects a difference
     kept = tomo_star_to_tilt_particles(project["particles"], project["tomograms"],
                                        shifts="from_origin")
+    pd.testing.assert_frame_equal(default, kept)
     assert np.abs(kept["rlnOriginXAngst"]).max() > 1e-3
     assert np.abs(kept["rlnOriginYAngst"]).max() > 1e-3
 

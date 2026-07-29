@@ -42,7 +42,9 @@ import starfile
 from xmipp_metadata.image_handler.image_handler import ImageHandler
 from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels, read_cs_to_relion_df, write_dict_to_cs
 from xmipp_metadata.metadata.relion_tomo import tomo_star_to_tilt_particles
-from xmipp_metadata.metadata.warp_tomo import warp_star_to_tilt_particles
+from xmipp_metadata.metadata.warp_tomo import (_groups_are_tilt_series,
+                                               has_warp_tilt_series_labels,
+                                               warp_star_to_tilt_particles)
 
 
 @lru_cache(maxsize=32)
@@ -348,14 +350,15 @@ class XmippMetaData(object):
     @staticmethod
     def _sniffTomoKind(file_name, max_lines=5000):
         '''
-        Cheap header sniff for a tomography particles file: only the label declarations
-        are scanned. The Warp/M test insists on ``rlnCtfScalefactor``, a tilt-series-only
-        label, since ordinary single-particle files also carry grouping columns.
+        Header sniff for a tomography particles file, scanning the label declarations of
+        each data block separately. A Warp/M match is only a candidate and is confirmed
+        against the table, since its labels also occur in single-particle files.
 
             :param file_name (string) --> Path to the STAR file
             :returns: "relion", "warp", or None when this is not tomography metadata
         '''
-        labels = set()
+        blocks = [[]]
+        columns, rows, tested, block = None, [], False, None
         try:
             with open(file_name, "r", errors="ignore") as f:
                 for i, line in enumerate(f):
@@ -364,21 +367,37 @@ class XmippMetaData(object):
                     line = line.strip()
                     if line.startswith("data_optimisation_set"):
                         return "relion"
-                    if line.startswith("_"):
-                        labels.add(line.split()[0])
+                    if line.startswith("data_"):
+                        blocks.append([])
+                        tested = False
+                    elif line.startswith("_"):
+                        blocks[-1].append(line.split()[0][1:])
+                    elif line and not line.startswith(("#", "loop_", ";")):
+                        if columns is None and not tested:
+                            tested = True
+                            if has_warp_tilt_series_labels(blocks[-1]):
+                                columns, block = list(blocks[-1]), len(blocks)
+                        if block == len(blocks) and len(line.split()) == len(columns):
+                            rows.append(line.split())
         except OSError:
             return None
 
-        # An optimisation set names the particles file; the block may be unnamed
-        if "_rlnTomoParticlesFile" in labels:
-            return "relion"
-        if "_rlnTomoName" in labels and (
-                "_rlnCenteredCoordinateZAngst" in labels or "_rlnCoordinateZ" in labels):
-            return "relion"
-        if "_rlnCtfScalefactor" in labels and (
-                "_rlnGroupName" in labels or "_rlnGroupNumber" in labels):
-            return "warp"
-        return None
+        for labels in blocks:
+            # An optimisation set names the particles file; the block may be unnamed
+            if "rlnTomoParticlesFile" in labels:
+                return "relion"
+            if "rlnTomoName" in labels and (
+                    "rlnCenteredCoordinateZAngst" in labels or "rlnCoordinateZ" in labels):
+                return "relion"
+
+        if columns is None or not rows:
+            return None
+        table = pd.DataFrame(rows, columns=columns)
+        for name in ("rlnCoordinateX", "rlnCoordinateY"):
+            if name in table.columns:
+                table[name] = pd.to_numeric(table[name], errors="coerce")
+        label = next(c for c in ("rlnGroupName", "rlnGroupNumber") if c in columns)
+        return "warp" if _groups_are_tilt_series(table, label) else None
 
     def write(self, filename, overwrite=True, updateImagePaths=False):
         '''

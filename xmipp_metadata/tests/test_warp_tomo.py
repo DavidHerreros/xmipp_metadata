@@ -31,6 +31,7 @@ import pytest
 import starfile
 
 from xmipp_metadata.metadata.warp_tomo import (
+    has_warp_tilt_series_labels,
     is_warp_tilt_series_star,
     warp_star_to_tilt_particles,
 )
@@ -112,6 +113,85 @@ def test_does_not_mistake_an_spa_star_for_a_tilt_series():
         "rlnOriginYAngst": [0.0, 1.0],
     })
     assert not is_warp_tilt_series_star({"particles": spa})
+
+
+def _spa_star(tmp_path, n_micrographs=3, n_particles=40, scalefactor=True):
+    """
+    A RELION single-particle refinement file. CTF::write emits rlnCtfScalefactor, so
+    an SPA file carries the labels a Warp tilt series is recognised by.
+    """
+    rng = np.random.default_rng(3)
+    rows = []
+    for m in range(n_micrographs):
+        for p in range(n_particles):
+            row = {
+                "rlnImageName": f"{p + 1}@Extract/job005/mic_{m:03d}.mrcs",
+                "rlnMicrographName": f"MotionCorr/mic_{m:03d}.mrc",
+                "rlnCoordinateX": rng.uniform(0, 4000),
+                "rlnCoordinateY": rng.uniform(0, 4000),
+                "rlnGroupNumber": m + 1,
+                "rlnGroupName": f"group_{m + 1}",
+                "rlnAngleRot": rng.uniform(-180, 180),
+                "rlnAngleTilt": rng.uniform(0, 180),
+                "rlnAnglePsi": rng.uniform(-180, 180),
+                "rlnOriginXAngst": rng.uniform(-10, 10),
+                "rlnOriginYAngst": rng.uniform(-10, 10),
+                "rlnDefocusU": rng.uniform(10000, 30000),
+                "rlnDefocusV": rng.uniform(10000, 30000),
+                "rlnDefocusAngle": rng.uniform(0, 180),
+                "rlnCtfBfactor": rng.uniform(-40, 0),
+                "rlnOpticsGroup": 1,
+            }
+            if scalefactor:
+                # relion_ctf_refine --fit_bfac fits this per particle
+                row["rlnCtfScalefactor"] = rng.uniform(0.8, 1.0)
+            rows.append(row)
+
+    optics = pd.DataFrame({
+        "rlnOpticsGroup": [1], "rlnImagePixelSize": [APIX], "rlnImageSize": [96],
+        "rlnVoltage": [300.0], "rlnSphericalAberration": [2.7],
+        "rlnAmplitudeContrast": [0.1],
+    })
+    particles = pd.DataFrame(rows)
+    path = tmp_path / "spa_run_data.star"
+    starfile.write({"optics": optics, "particles": particles}, path, overwrite=True)
+    return dict(path=path, particles=particles, n=n_micrographs * n_particles)
+
+
+def test_does_not_mistake_a_ctf_refined_spa_star_for_a_tilt_series(tmp_path):
+    """rlnCtfScalefactor plus rlnGroupNumber is exactly what an SPA file looks like."""
+    spa = _spa_star(tmp_path)
+    blocks = starfile.read(spa["path"], always_dict=True)
+    assert has_warp_tilt_series_labels(blocks["particles"].columns)
+    assert not is_warp_tilt_series_star(blocks)
+
+
+def test_spa_star_is_not_auto_expanded(tmp_path):
+    from xmipp_metadata.metadata import XmippMetaData
+
+    spa = _spa_star(tmp_path)
+    assert XmippMetaData._sniffTomoKind(str(spa["path"])) is None
+
+    md = XmippMetaData(str(spa["path"]))
+    assert not md.isTomo and md.tomoFormat is None
+    assert len(md) == spa["n"]
+    assert not md.isMetaDataLabel("subtomo_labels")
+
+
+def test_labels_are_scoped_to_their_block(tmp_path):
+    """The grouping column alone in one block must not complete a match in another."""
+    from xmipp_metadata.metadata import XmippMetaData
+
+    particles = pd.DataFrame({
+        "rlnImageName": ["1@a.mrcs", "2@a.mrcs"],
+        "rlnCtfScalefactor": [1.0, 1.0],
+        "rlnAngleRot": [0.0, 10.0],
+    })
+    groups = pd.DataFrame({"rlnGroupNumber": [1, 2], "rlnGroupScaleCorrection": [1.0, 1.0]})
+    path = tmp_path / "split.star"
+    starfile.write({"particles": particles, "model_groups": groups}, path, overwrite=True)
+
+    assert XmippMetaData._sniffTomoKind(str(path)) is None
 
 
 def test_does_not_claim_a_relion5_file():

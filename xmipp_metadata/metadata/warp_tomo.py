@@ -61,6 +61,7 @@ from xmipp_metadata.metadata.relion_tomo import _read_star
 
 
 __all__ = [
+    "has_warp_tilt_series_labels",
     "is_warp_tilt_series_star",
     "warp_star_to_tilt_particles",
 ]
@@ -72,15 +73,49 @@ __all__ = [
 _WARP_DOSE_BFACTOR_PER_E = 4.0
 
 
+_GROUP_LABELS = ("rlnGroupName", "rlnGroupNumber")
+
+
+def has_warp_tilt_series_labels(cols):
+    """
+    True when these column names are the ones a Warp-1.x / M tilt-series file uses.
+
+    Necessary but not sufficient: ``rlnCtfScalefactor`` is written by RELION's
+    ``CTF::write`` and so also appears in single-particle files, which carry
+    ``rlnGroupNumber`` too. Confirm a match with :func:`is_warp_tilt_series_star`.
+
+        :param cols --> iterable of column names
+        :returns: bool
+    """
+    cols = set(cols)
+    if "rlnTomoName" in cols and "rlnTomoVisibleFrames" in cols:
+        return False            # RELION-5 / Warp 2.x shaped, not this format
+    return "rlnCtfScalefactor" in cols and bool(set(_GROUP_LABELS) & cols)
+
+
+def _groups_are_tilt_series(df, group_label):
+    """
+    True when a group holds the tilt images of one particle rather than the many
+    particles of one micrograph, which is what the same columns mean in SPA.
+    """
+    grouped = df.groupby(group_label, sort=False)
+    sizes = grouped.size()
+    if sizes.empty or int(sizes.max()) < 2:
+        return False
+
+    # A particle keeps its coordinate across tilts; particles sharing a group do not
+    coords = [c for c in ("rlnCoordinateX", "rlnCoordinateY") if c in df.columns]
+    if coords:
+        moving = grouped[coords].nunique().max(axis=1) > 1
+        if float(moving.mean()) > 0.5:
+            return False
+    return True
+
+
 def is_warp_tilt_series_star(blocks):
     """
     True when this STAR file is a Warp-1.x / M tilt-series particle file: one row
     per tilt image, already carrying a composed 2D pose.
-
-    The discriminator is ``rlnCtfScalefactor`` (a tilt-series-only label that never
-    appears in single-particle data) together with a grouping column.  Grouping
-    alone is not enough -- ordinary SPA files also carry ``rlnGroupNumber``, and
-    mistaking one for a tilt series would silently fuse unrelated particles.
 
         :param blocks --> dict of DataFrames, or a single DataFrame
         :returns: bool
@@ -89,11 +124,12 @@ def is_warp_tilt_series_star(blocks):
     for df in frames:
         if not isinstance(df, pd.DataFrame):
             continue
-        cols = set(df.columns)
-        if "rlnTomoName" in cols and "rlnTomoVisibleFrames" in cols:
-            return False        # RELION-5 / Warp 2.x shaped, not this format
-        if "rlnCtfScalefactor" in cols and (
-                {"rlnGroupName", "rlnGroupNumber"} & cols):
+        if "rlnTomoName" in df.columns and "rlnTomoVisibleFrames" in df.columns:
+            return False
+        if not has_warp_tilt_series_labels(df.columns):
+            continue
+        label = next(c for c in _GROUP_LABELS if c in df.columns)
+        if _groups_are_tilt_series(df, label):
             return True
     return False
 

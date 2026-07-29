@@ -31,4 +31,5 @@ from .relion_tomo import (TiltSeriesGeometry, read_tomograms_star, read_optimisa
                           matrix_to_relion_angles, projection_matrix_from_angles,
                           build_deformation, Linear2DDeformation, Spline2DDeformation,
                           Fourier2DDeformation)
-from .warp_tomo import is_warp_tilt_series_star, warp_star_to_tilt_particles
+from .warp_tomo import (has_warp_tilt_series_labels, is_warp_tilt_series_star,
+                        warp_star_to_tilt_particles)

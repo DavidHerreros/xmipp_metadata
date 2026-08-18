@@ -1190,3 +1190,51 @@ def test_data_general_block_does_not_derail_the_read(tomo_project, tmp_path):
         path, tomo_project["tomograms"],
         tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
     pd.testing.assert_frame_equal(reference, got)
+
+
+def _make_pseudo_subtomo_particles(tomo_project, tmp_path):
+    """Turn the 2D-stack particles.star fixture into a 3D pseudo-subtomogram one."""
+    blocks = starfile.read(tomo_project["particles"], always_dict=True)
+    parts = blocks["particles"].drop(columns=["rlnTomoVisibleFrames"])
+    n = len(parts)
+    parts["rlnImageName"] = [f"Subtomograms/{i + 1:06d}_data.mrc" for i in range(n)]
+    parts["rlnCtfImage"] = [f"Subtomograms/{i + 1:06d}_weights.mrc" for i in range(n)]
+    blocks["particles"] = parts
+    path = tmp_path / "particles_pseudo.star"
+    starfile.write(blocks, path, overwrite=True)
+    return path
+
+
+def test_pseudo_subtomogram_star_warns_and_uses_tilt_series(tomo_project, tmp_path):
+    """A 3D pseudo-subtomogram star must not silently discard rlnImageName."""
+    path = _make_pseudo_subtomo_particles(tomo_project, tmp_path)
+
+    with pytest.warns(RuntimeWarning, match="pseudo-subtomograms"):
+        df = tomo_star_to_tilt_particles(
+            path, tomo_project["tomograms"],
+            tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+
+    assert not df["rlnImageName"].astype(str).str.endswith("_data.mrc").any()
+    assert df["rlnImageName"].astype(str).str.contains("frames/").all()
+
+
+def test_pseudo_subtomogram_warns_when_tilt_series_also_has_no_names(tomo_project, tmp_path):
+    """When the tilt series itself carries no image names, the warning must say so."""
+    for name in ("ts_001", "ts_002"):
+        ts_path = tmp_path / f"tilt_series_{name}.star"
+        ts = starfile.read(ts_path, always_dict=True)[name].drop(columns=["rlnMicrographName"])
+        starfile.write({name: ts}, ts_path, overwrite=True)
+
+    path = _make_pseudo_subtomo_particles(tomo_project, tmp_path)
+    with pytest.warns(RuntimeWarning, match="no tilt-series images are named either"):
+        tomo_star_to_tilt_particles(
+            path, tomo_project["tomograms"],
+            tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+
+
+def test_2d_stack_star_does_not_raise_pseudo_subtomogram_warning(tomo_project, recwarn):
+    """The ordinary 2D-stack fixture must not trip the new pseudo-subtomogram warning."""
+    tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    assert not [w for w in recwarn if "pseudo-subtomograms" in str(w.message)]

@@ -1101,6 +1101,22 @@ def tomo_star_to_tilt_particles(
         box_size = float(np.median(parts["rlnImageSize"].to_numpy())) * binning
 
     has_stack2d = "rlnTomoVisibleFrames" in parts.columns
+    if not has_stack2d and "rlnImageName" in parts.columns and (
+            "rlnCtfImage" in parts.columns
+            or parts["rlnImageName"].astype(str).str.endswith("_data.mrc").any()):
+        has_tilt_names = any(g.micrograph_name is not None for g in geoms.values())
+        if has_tilt_names:
+            outcome = ("rlnImageName is being replaced by the tilt-series images "
+                      "that each row will be cropped from.")
+        else:
+            outcome = ("no tilt-series images are named either, so the output will "
+                      "carry no image path at all; a 2D-stack extraction (or the "
+                      "tilt series itself) is needed to get one.")
+        warnings.warn(
+            "the particles look like 3D pseudo-subtomograms (rlnImageName -> "
+            f"*_data.mrc, no rlnTomoVisibleFrames); {outcome} Extracted 2D stacks "
+            "cannot be substituted here -- without rlnTomoVisibleFrames the slice "
+            "order is undefined.", RuntimeWarning)
     requested_shifts = shifts
 
     origin_cols = [c for c in ("rlnOriginXAngst", "rlnOriginYAngst",

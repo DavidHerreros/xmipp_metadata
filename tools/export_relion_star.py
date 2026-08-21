@@ -4,12 +4,11 @@ Export a tomo STAR file as a per-tilt-image particles STAR that RELION can read.
 
     python export_relion_star.py run_optimisation_set.star particles_tilts.star
 
-This exists because ``XmippMetaData.write()`` round-trips through Xmipp labels and the
-result is not loadable by RELION: the shifts come out as ``rlnOriginX`` in pixels rather
-than ``rlnOriginXAngst``, the CTF lands under ``rlnCtfDefocusU`` instead of
-``rlnDefocusU``, the optics block loses ``rlnImagePixelSize``, and ``subtomo_labels`` is
-not a RELION label at all. The expansion itself already emits RELION labels, so all this
-does is keep them and add the optics block RELION needs.
+``tomo_star_to_tilt_particles`` expands the tilt series into per-tilt-image rows already
+in RELION labels, but it has no notion of a ``data_optics`` block and no opinion on which
+of those columns RELION actually needs, so this script picks the columns, builds the
+optics block (pixel size, box size, premultiplied flag), and writes the two-block STAR
+RELION expects -- it does not go through ``XmippMetaData.write()`` / Xmipp labels at all.
 
 The point of having it is to let RELION reconstruct from the alignment this package
 derives. If ``relion_reconstruct`` produces the phantom from these poses, the conversion

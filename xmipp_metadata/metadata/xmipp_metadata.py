@@ -445,6 +445,25 @@ class XmippMetaData(object):
 
         starfile.write(table_to_write, filename, overwrite=overwrite)
 
+        if os.path.splitext(filename)[1] == ".star":
+            self._stampRelionVersion(filename)
+
+    @staticmethod
+    def _stampRelionVersion(filename):
+        '''
+        Replace starfile's own "# Created by ..." header line with the "# version 30001"
+        line RELION itself writes, so downstream RELION/Scipion readers see a familiar file.
+        '''
+        with open(filename, "r") as f:
+            content = f.read()
+
+        first_line, _, rest = content.partition("\n")
+        if first_line.startswith("# Created by the starfile"):
+            content = "# version 30001\n" + rest
+
+            with open(filename, "w") as f:
+                f.write(content)
+
     def __del__(self):
         '''
         Closes the Metadata file and binaries to save memory

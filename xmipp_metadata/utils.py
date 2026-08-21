@@ -26,6 +26,7 @@
 
 
 import shutil
+import warnings
 import numpy as np
 import math
 from emtable import Table
@@ -83,6 +84,7 @@ RELION_TO_XMIPP_NOUSCORE = {
     "rlnOriginZ": "shiftZ",
     "rlnOriginXAngst": "shiftX",
     "rlnOriginYAngst": "shiftY",
+    "rlnOriginZAngst": "shiftZ",
 
     # CTF parameters
     "rlnVoltage": "ctfVoltage",
@@ -150,9 +152,9 @@ XMIPP_TO_RELION_PARTICLES = {
     "ctfMaxResolution": "rlnCtfMaxResolution",
     "ctfFom": "rlnCtfFigureOfMerit",
     "ctfValue": "rlnCtfValue",
-    "ctfDefocusU": "rlnCtfDefocusU",
-    "ctfDefocusV": "rlnCtfDefocusV",
-    "ctfDefocusAngle": "rlnCtfDefocusAngle",
+    "ctfDefocusU": "rlnDefocusU",
+    "ctfDefocusV": "rlnDefocusV",
+    "ctfDefocusAngle": "rlnDefocusAngle",
 
     # misc stats
     "autopickFom": "rlnAutopickFigureOfMerit",
@@ -168,7 +170,6 @@ XMIPP_TO_RELION_PARTICLES = {
 # Optics fields to extract from the Xmipp table (group-level)
 XMIPP_TO_RELION_OPTICS = {
     "groupId": "rlnOpticsGroup",
-    "groupName": "rlnGroupName",  # optional, RELION supports rlnOpticsGroupName (varies by version)
     "ctfVoltage": "rlnVoltage",
     "ctfSphericalAberration": "rlnSphericalAberration",
     "ctfQ0": "rlnAmplitudeContrast",
@@ -177,6 +178,18 @@ XMIPP_TO_RELION_OPTICS = {
     # Add more group-level fields if you keep them at optics scope in your workflow,
     # e.g. "samplingRate": "rlnImagePixelSize" (if you maintain such a column).
 }
+
+# RELION labels that live in data_optics and have no Xmipp counterpart; they pass through
+# the Xmipp table under their rln* name and are routed back to the optics block on write.
+RELION_OPTICS_PASSTHROUGH_LABELS = (
+    "rlnOpticsGroupName", "rlnMtfFileName",
+    "rlnMicrographOriginalPixelSize", "rlnMicrographPixelSize", "rlnMicrographBinning",
+    "rlnImagePixelSize", "rlnImageSize", "rlnImageDimensionality",
+    "rlnCtfDataAreCtfPremultiplied", "rlnBeamTiltX", "rlnBeamTiltY",
+    "rlnOddZernike", "rlnEvenZernike",
+    "rlnMagMat00", "rlnMagMat01", "rlnMagMat10", "rlnMagMat11",
+    "rlnEERGrouping", "rlnEERUpsampling",
+)
 
 
 def emtable_2_pandas(file_name):
@@ -265,6 +278,27 @@ def _merge_optics_into_particles(
     return particles
 
 
+def _pixel_size_per_row(df: pd.DataFrame) -> Optional[np.ndarray]:
+    """
+    Per-row pixel size (Angstrom/px), read off the ``rlnImagePixelSize`` column -- present
+    as a passthrough column in an Xmipp table built from a RELION-3.1 file, or straight from
+    the optics merge in a RELION table. Missing values are filled from the mean within the
+    same optics group ('groupId' on the Xmipp side, 'rlnOpticsGroup' on the RELION side),
+    when that column is available. Returns None if no pixel size can be recovered.
+    """
+    if "rlnImagePixelSize" not in df.columns:
+        return None
+    apix = pd.to_numeric(df["rlnImagePixelSize"], errors="coerce")
+    if apix.isna().any():
+        group_col = "groupId" if "groupId" in df.columns else (
+            "rlnOpticsGroup" if "rlnOpticsGroup" in df.columns else None)
+        if group_col is not None:
+            apix = apix.fillna(apix.groupby(df[group_col]).transform("mean"))
+    if apix.isna().any():
+        return None
+    return apix.to_numpy(dtype=np.float64)
+
+
 def relion_df_to_xmipp_labels(
     star_obj: Union[pd.DataFrame, Dict[str, pd.DataFrame]],
     *,
@@ -325,6 +359,32 @@ def relion_df_to_xmipp_labels(
             if old in df.columns and new in df.columns:
                 df = df.drop(columns=[old])
 
+    # Shifts: Xmipp's convention is pixels, so an Angstrom origin column has to be
+    # converted rather than just renamed. Do this before the rename below, or the
+    # existing rlnOriginXAngst -> shiftX mapping would leave the Angstrom value in place
+    # and, whenever rlnOriginX was also present, the rename would collide on shiftX.
+    apix = _pixel_size_per_row(df)
+    angst_kept_as_is = []
+    for axis in "XYZ":
+        angst_col, pix_col = f"rlnOrigin{axis}Angst", f"rlnOrigin{axis}"
+        if angst_col not in df.columns:
+            continue
+        if apix is not None:
+            df[pix_col] = df[angst_col].to_numpy(dtype=np.float64) / apix
+            df = df.drop(columns=[angst_col])
+        elif pix_col in df.columns:
+            # Can't convert, but a pixel-valued column already exists -- keep that one.
+            df = df.drop(columns=[angst_col])
+        else:
+            angst_kept_as_is.append(angst_col)
+    if angst_kept_as_is:
+        warnings.warn(
+            f"{', '.join(angst_kept_as_is)} were read with no rlnImagePixelSize to "
+            "convert Angstrom shifts to pixels; the resulting shift columns are in "
+            "Angstrom, not the pixel convention Xmipp expects.",
+            RuntimeWarning,
+        )
+
     # Apply renaming
     rename_map = {c: relion_to_xmipp[c] for c in df.columns if c in relion_to_xmipp}
     df = df.rename(columns=rename_map)
@@ -335,7 +395,7 @@ def relion_df_to_xmipp_labels(
 def xmipp_df_to_relion_labels(
     xmipp_df: pd.DataFrame,
     *,
-    shift_units: Literal["pixels", "angstroms"] = "pixels",
+    shift_units: Literal["auto", "pixels", "angstroms"] = "auto",
     default_group: int = 1,
     optics_aggregate: Literal["first", "mean", "median"] = "first",
     drop_optics_from_particles: bool = True,
@@ -349,11 +409,15 @@ def xmipp_df_to_relion_labels(
     xmipp_df : pd.DataFrame
         Input table with columns like: image, micrograph, xcoor, ycoor, anglePsi,
         shiftX, ctfVoltage, ctfDefocusU, ..., groupId, etc.
-    shift_units : {'pixels','angstroms'}
-        Choose how to map shiftX/shiftY:
-          - 'pixels'   -> rlnOriginX,  rlnOriginY
-          - 'angstroms'-> rlnOriginXAngst, rlnOriginYAngst
-        (shiftZ always mapped to rlnOriginZ if present)
+    shift_units : {'auto','pixels','angstroms'}
+        Choose how to map shiftX/shiftY/shiftZ:
+          - 'auto'      -> Angstrom (rlnOrigin{X,Y,Z}Angst) when a per-row pixel size can
+                           be determined from a 'rlnImagePixelSize' column, else pixels.
+          - 'pixels'    -> rlnOriginX, rlnOriginY, rlnOriginZ (Xmipp's native unit; no
+                           conversion needed).
+          - 'angstroms' -> rlnOriginXAngst, rlnOriginYAngst, rlnOriginZAngst. Xmipp shifts
+                           are always in pixels, so this converts using the pixel size; a
+                           ValueError is raised if none is known.
     default_group : int
         Used if no 'groupId' is present; all rows are assigned to this group.
     optics_aggregate : {'first','mean','median'}
@@ -379,24 +443,36 @@ def xmipp_df_to_relion_labels(
     rename_map_particles = {c: XMIPP_TO_RELION_PARTICLES[c]
                             for c in parts.columns if c in XMIPP_TO_RELION_PARTICLES}
 
-    # Handle shifts by unit
-    if "shiftX" in parts.columns:
-        rename_map_particles["shiftX"] = "rlnOriginX" if shift_units == "pixels" else "rlnOriginXAngst"
-    if "shiftY" in parts.columns:
-        rename_map_particles["shiftY"] = "rlnOriginY" if shift_units == "pixels" else "rlnOriginYAngst"
-    if "shiftZ" in parts.columns:
-        # RELION rarely uses an Å label for Z; map to pixels-style name for compatibility
-        rename_map_particles["shiftZ"] = "rlnOriginZ"
+    # Handle shifts by unit. Xmipp shifts are always in pixels, so an Angstrom output
+    # has to be computed explicitly rather than just renamed.
+    shift_axes = [a for a in "XYZ" if f"shift{a}" in parts.columns]
+    if shift_axes:
+        apix = _pixel_size_per_row(df) if shift_units in ("auto", "angstroms") else None
+        if shift_units == "angstroms" and apix is None:
+            raise ValueError(
+                "shift_units='angstroms' requires a known per-row pixel size (a "
+                "'rlnImagePixelSize' column); none was found")
+        use_angstroms = shift_units == "angstroms" or (shift_units == "auto" and apix is not None)
+
+        for axis in shift_axes:
+            shift_col = f"shift{axis}"
+            if use_angstroms:
+                parts[f"rlnOrigin{axis}Angst"] = parts[shift_col].to_numpy(dtype=np.float64) * apix
+                parts = parts.drop(columns=[shift_col])
+            else:
+                rename_map_particles[shift_col] = f"rlnOrigin{axis}"
 
     particles = parts.rename(columns=rename_map_particles)
 
     # 2) Build the optics table (group-level collapse)
     optics_cols_present = [c for c in XMIPP_TO_RELION_OPTICS if c in df.columns]
-    if not optics_cols_present:
+    passthrough_cols_present = [c for c in RELION_OPTICS_PASSTHROUGH_LABELS if c in df.columns]
+    all_optics_src_cols = optics_cols_present + passthrough_cols_present
+    if not all_optics_src_cols:
         # Still need at least the group column
         optics_df = pd.DataFrame({"rlnOpticsGroup": sorted(df["groupId"].unique())})
     else:
-        optics_src = df[["groupId"] + [c for c in optics_cols_present if c != "groupId"]].copy()
+        optics_src = df[["groupId"] + [c for c in all_optics_src_cols if c != "groupId"]].copy()
 
         # Aggregate to one row per group
         agg_methods = {
@@ -408,7 +484,16 @@ def xmipp_df_to_relion_labels(
 
         grouped = optics_src.groupby("groupId", dropna=False).agg(agg).reset_index()
 
-        # Rename to RELION labels
+        # RELION keeps these as integers; the "first" aggregator can leave them as
+        # object dtype, so cast back explicitly wherever every value survived.
+        int_cols = ("rlnImageSize", "rlnImageDimensionality", "rlnEERGrouping",
+                    "rlnEERUpsampling", "rlnCtfDataAreCtfPremultiplied")
+        for c in int_cols:
+            if c in grouped.columns and grouped[c].notna().all():
+                grouped[c] = pd.to_numeric(grouped[c]).astype("int64")
+
+        # Rename the Xmipp-named columns to RELION labels; passthrough columns are
+        # already rln* and keep their name.
         rename_map_optics = {c: XMIPP_TO_RELION_OPTICS[c] for c in grouped.columns if c in XMIPP_TO_RELION_OPTICS}
         optics_df = grouped.rename(columns=rename_map_optics)
 
@@ -417,6 +502,10 @@ def xmipp_df_to_relion_labels(
             optics_df = optics_df.rename(columns={"groupId": "rlnOpticsGroup"})
         # RELION often expects integer group ids
         optics_df["rlnOpticsGroup"] = optics_df["rlnOpticsGroup"].astype("int64", errors="ignore")
+
+    # RELION expects every optics group to be named
+    if "rlnOpticsGroupName" not in optics_df.columns:
+        optics_df["rlnOpticsGroupName"] = [f"opticsGroup{int(g)}" for g in optics_df["rlnOpticsGroup"]]
 
     # 3) Clean the particles table: ensure rlnOpticsGroup exists & type
     if "rlnOpticsGroup" not in particles.columns and "groupId" in parts.columns:
@@ -432,9 +521,10 @@ def xmipp_df_to_relion_labels(
         to_drop_particle_side = [XMIPP_TO_RELION_OPTICS[c]
                                  for c in optics_cols_present
                                  if c in XMIPP_TO_RELION_OPTICS and XMIPP_TO_RELION_OPTICS[c] in particles.columns]
-        # Also drop the Xmipp originals if still around
+        # Also drop the Xmipp originals and any optics passthrough columns if still around
         to_drop_particle_side += [c for c in optics_cols_present if c in particles.columns]
-        to_drop_particle_side = sorted(set(to_drop_particle_side) - {"rlnOpticsGroup", "rlnGroupName"})
+        to_drop_particle_side += [c for c in passthrough_cols_present if c in particles.columns]
+        to_drop_particle_side = sorted(set(to_drop_particle_side) - {"rlnOpticsGroup"})
         particles = particles.drop(columns=[c for c in to_drop_particle_side if c in particles.columns])
 
     # 5) Sort columns a bit (optional nicety)
@@ -443,7 +533,7 @@ def xmipp_df_to_relion_labels(
                       if c in particles.columns]
     particles = particles[[*part_key_order, *[c for c in particles.columns if c not in part_key_order]]]
 
-    opt_key_order = [c for c in ["rlnOpticsGroup","rlnGroupName"] if c in optics_df.columns]
+    opt_key_order = [c for c in ["rlnOpticsGroupName","rlnOpticsGroup"] if c in optics_df.columns]
     optics_df = optics_df[[*opt_key_order, *[c for c in optics_df.columns if c not in opt_key_order]]]
 
     return {"optics": optics_df, "particles": particles}
@@ -630,6 +720,12 @@ def write_dict_to_cs(input_data, output_filename):
         output_arrays['blob/psize_A'] = psize
         consumed_keys.add('_rlnPixelSize')
         consumed_keys.add('_rlnDetectorPixelSize')
+    elif '_rlnImagePixelSize' in data:
+        # optics-block pixel size, merged into the particles above
+        psize = get_arr('_rlnImagePixelSize', dtype=np.float32)
+        dtype_list.append(('blob/psize_A', '<f4'))
+        output_arrays['blob/psize_A'] = psize
+        consumed_keys.add('_rlnImagePixelSize')
     elif 'blob/psize_A' in data:
         psize = get_arr('blob/psize_A', dtype=np.float32)
 

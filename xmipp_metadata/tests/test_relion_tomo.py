@@ -46,6 +46,7 @@ from xmipp_metadata.metadata.relion_tomo import (
     read_tomograms_star,
     read_trajectories_star,
     tomo_star_to_tilt_particles,
+    tilt_rotation_matrices,
     read_optimisation_set,
     is_relion_tomo_star,
     _read_star,
@@ -1238,3 +1239,75 @@ def test_2d_stack_star_does_not_raise_pseudo_subtomogram_warning(tomo_project, r
         tomo_project["particles"], tomo_project["tomograms"],
         tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
     assert not [w for w in recwarn if "pseudo-subtomograms" in str(w.message)]
+
+
+# --------------------------------------------------------------------------- #
+#  rotationTs columns
+# --------------------------------------------------------------------------- #
+
+def test_rotation_ts_matches_geometry(tomo_project):
+    df = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    geoms = read_tomograms_star(tomo_project["tomograms"],
+                                tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+
+    R = tilt_rotation_matrices(df)
+    for k in (0, 5, 17, len(df) - 1):
+        row = df.iloc[k]
+        geom = geoms[row["rlnTomoName"]]
+        expected = geom.projection[int(row["rlnTomoFrameIndex"]) - 1, :3, :3]
+        assert np.allclose(R[k], expected, atol=1e-12), k
+
+
+def test_rotation_ts_missing_columns_raise():
+    with pytest.raises(ValueError, match="rotationTs"):
+        tilt_rotation_matrices(pd.DataFrame({"foo": [1, 2, 3]}))
+
+
+def test_rotation_ts_is_left_factor_of_composition(tomo_project):
+    """R_ts.T @ A_tot must equal A_sub @ A_part, and be constant within a particle."""
+    df = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    parts = starfile.read(tomo_project["particles"], always_dict=True)["particles"]
+
+    R_ts = tilt_rotation_matrices(df)
+    A_tot = relion_angles_to_matrix(df["rlnAngleRot"].to_numpy(),
+                                    df["rlnAngleTilt"].to_numpy(),
+                                    df["rlnAnglePsi"].to_numpy())
+    P = np.einsum('nji,njk->nik', R_ts, A_tot)
+
+    labels = df["subtomo_labels"].to_numpy()
+    for label in np.unique(labels):
+        idx = np.nonzero(labels == label)[0]
+        group = P[idx]
+        assert np.max(np.abs(group - group[0])) < 1e-9, label
+
+        p = parts.iloc[label - 1]
+        if "rlnTomoSubtomogramRot" in parts.columns:
+            A_sub = _relion_euler_angles2matrix(p["rlnTomoSubtomogramRot"],
+                                                p["rlnTomoSubtomogramTilt"],
+                                                p["rlnTomoSubtomogramPsi"])
+        else:
+            A_sub = np.eye(3)
+        A_part = _relion_euler_angles2matrix(p["rlnAngleRot"], p["rlnAngleTilt"],
+                                             p["rlnAnglePsi"])
+        assert np.allclose(group[0], A_sub @ A_part, atol=1e-9), label
+
+
+def test_rotation_ts_round_trips_through_xmipp_metadata(tomo_project, tmp_path):
+    df = tomo_star_to_tilt_particles(
+        tomo_project["particles"], tomo_project["tomograms"],
+        tilt_image_size=(tomo_project["w0"], tomo_project["h0"]))
+    expected = tilt_rotation_matrices(df)
+
+    star_path = tmp_path / "tilt_particles.star"
+    starfile.write({"particles": df}, star_path, overwrite=True)
+
+    md = XmippMetaData(str(star_path))
+    columns = [f"rotationTs{i}{j}" for i in range(3) for j in range(3)]
+    for c in columns:
+        assert pd.api.types.is_numeric_dtype(md.table[c]), c
+    got = md.table[columns].to_numpy(dtype=np.float64).reshape(-1, 3, 3)
+    assert np.allclose(got, expected, atol=1e-6)  # STAR text round-trip loses precision

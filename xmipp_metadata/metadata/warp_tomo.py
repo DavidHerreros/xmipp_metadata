@@ -49,6 +49,8 @@ Note Warp **2.x** (``WarpTools ts_export_particles --2d``) does *not* write this
 format: it writes a RELION-5 shaped particles file (``rlnTomoParticleName``,
 ``rlnTomoVisibleFrames``) plus a matching tomograms STAR file.  Those go through
 :mod:`xmipp_metadata.metadata.relion_tomo` instead.
+
+These files carry no tilt geometry, so this module's output cannot carry ``rotationTs``.
 """
 
 import os

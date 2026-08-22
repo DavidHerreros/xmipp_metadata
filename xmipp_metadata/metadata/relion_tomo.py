@@ -70,6 +70,7 @@ __all__ = [
     "read_trajectories_star",
     "is_relion_tomo_star",
     "tomo_star_to_tilt_particles",
+    "tilt_rotation_matrices",
 ]
 
 
@@ -1300,6 +1301,12 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
         "rlnTomoFrameIndex": fi + 1,
     }
 
+    # Tilt-geometry rotation R_f alone, so consumers can recover A_sub @ A_part = R_ts.T @ A_tot
+    R_ts = geom.projection[fi, :3, :3]
+    for i in range(3):
+        for j in range(3):
+            out[f"rotationTs{i}{j}"] = R_ts[:, i, j]
+
     if shift_units == "angstrom":
         out["rlnOriginXAngst"] = origin_angst[pi, fi, 0]
         out["rlnOriginYAngst"] = origin_angst[pi, fi, 1]
@@ -1337,3 +1344,17 @@ def _expand_tomogram(df, geom, *, box_size, binning, shifts, shift_units, visibi
             out[column] = df[column].to_numpy()[pi]
 
     return pd.DataFrame(out)
+
+
+def tilt_rotation_matrices(df):
+    '''
+    The per-row tilt-geometry rotation matrices written by tomo_star_to_tilt_particles.
+
+        :param df (DataFrame) --> a converted per-tilt-image table
+        :returns: (N, 3, 3) array
+    '''
+    columns = [f"rotationTs{i}{j}" for i in range(3) for j in range(3)]
+    missing = [c for c in columns if c not in df.columns]
+    if missing:
+        raise ValueError(f"table is missing tilt-geometry rotation columns: {missing}")
+    return df[columns].to_numpy(dtype=np.float64).reshape(-1, 3, 3)

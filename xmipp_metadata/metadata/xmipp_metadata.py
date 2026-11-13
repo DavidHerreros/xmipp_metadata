@@ -29,6 +29,8 @@ import numpy as np
 
 import os
 
+import warnings
+
 from functools import lru_cache
 
 from pathlib import Path
@@ -39,6 +41,10 @@ import starfile
 
 from xmipp_metadata.image_handler.image_handler import ImageHandler
 from xmipp_metadata.utils import emtable_2_pandas, relion_df_to_xmipp_labels, xmipp_df_to_relion_labels, read_cs_to_relion_df, write_dict_to_cs
+from xmipp_metadata.metadata.relion_tomo import tomo_star_to_tilt_particles
+from xmipp_metadata.metadata.warp_tomo import (_groups_are_tilt_series,
+                                               has_warp_tilt_series_labels,
+                                               warp_star_to_tilt_particles)
 
 
 @lru_cache(maxsize=32)
@@ -85,6 +91,15 @@ class XmippMetaData(object):
             - Auto: Determine automatically the best way to read the file
             - Pandas: Read the metadata file as a Pandas table
             - EMTable: Read the metadata file as a EMTable, which will be converted to Pandas later
+        :param tomo (bool or string - Optional) --> Tomography handling. ``None`` (the
+            default) auto-detects the format, ``False`` disables it, ``True`` forces the
+            RELION path, and ``"relion"`` / ``"warp"`` select a format explicitly.
+            ``"relion"`` folds the tilt-series geometry into the particle alignment;
+            ``"warp"`` reads an already-expanded Warp-1.x / M tilt-series file.
+        :param tomograms_star (string - Optional) --> Path to the tomograms STAR file the
+            tilt-series geometry lives in. Auto-discovered when omitted.
+        :param tomo_kwargs (dict - Optional) --> Extra options forwarded to
+            :func:`~xmipp_metadata.metadata.relion_tomo.tomo_star_to_tilt_particles`
     '''
 
     DEBUG = False
@@ -94,17 +109,20 @@ class XmippMetaData(object):
                             'scoreByVariance', 'scoreByGiniCoeff', 'shiftX', 'shiftY', 'shiftZ',
                             'xcoor', 'ycoor']
 
-    def __init__(self, file_name=None, rows=None, readFrom="Auto", **kwargs):
-        # Directory the metadata was read from. Relative image paths in the metadata are
-        # defined relative to this directory (not the process CWD), so it is the base used
-        # to re-resolve them when writing elsewhere (see ``write(updateImagePaths=True)``).
-        # ``None`` for metadata built in-memory (no source file), in which case the CWD is
-        # used as a best-effort fallback.
+    def __init__(self, file_name=None, rows=None, readFrom="Auto", tomo=None,
+                 tomograms_star=None, tomo_kwargs=None, **kwargs):
+        # Directory the metadata was read from; the starting point for _findImageRoot.
         self._source_dir = None
+        # Project root that relative image paths resolve against, located by _findImageRoot.
+        self._image_root = None
+        # True once a tomography STAR file has been expanded to one row per tilt image
+        self.isTomo = False
+        self.tomoFormat = None
         if file_name:
             if isinstance(file_name, str):
                 if file_name.split(".")[-1] in ["xmd", "star", "cs"]:
-                    self.read(file_name, readFrom)
+                    self.read(file_name, readFrom, tomo=tomo,
+                              tomograms_star=tomograms_star, tomo_kwargs=tomo_kwargs)
                 elif file_name.split(".")[-1] in ["stk", "mrcs"]:  # Create new metadata from images
                     self._source_dir = os.path.dirname(os.path.abspath(file_name))
                     # Fill metadata with images
@@ -203,14 +221,42 @@ class XmippMetaData(object):
     def __setitem__(self, key, value):
         self.table.loc[key] = value
 
-    def read(self, file_name, readFrom="Auto"):
+    def read(self, file_name, readFrom="Auto", tomo=None, tomograms_star=None,
+             tomo_kwargs=None):
         '''
         Read a metadata file
             :param file_name (string) --> Path to metadata file
+            :param tomo (bool - Optional) --> Force (True) / forbid (False) the RELION
+                tomography expansion. ``None`` auto-detects it.
+            :param tomograms_star (string - Optional) --> Tomograms STAR file
+            :param tomo_kwargs (dict - Optional) --> Extra options for the expansion
         '''
-        # Relative image paths in this file are defined relative to its own directory;
-        # remember it so a later write to a different location can re-resolve them.
+        # Remembered so a later write to another location can re-resolve image paths.
         self._source_dir = os.path.dirname(os.path.abspath(file_name))
+
+        # A RELION-5 file needs the tilt-series geometry composed in; a Warp file does not.
+        if tomo is not False and os.path.splitext(file_name)[1] == ".star":
+            kind = tomo if isinstance(tomo, str) else None
+            if kind is None:
+                kind = "relion" if tomo else self._sniffTomoKind(file_name)
+
+            if kind is not None:
+                kwargs = dict(tomo_kwargs or {})
+                kwargs.setdefault("shift_units", "pixel")
+                if kind == "relion":
+                    table = tomo_star_to_tilt_particles(
+                        file_name, tomograms_star, **kwargs)
+                elif kind == "warp":
+                    table = warp_star_to_tilt_particles(file_name, **kwargs)
+                else:
+                    raise ValueError(
+                        f"unknown tomography format {kind!r}; use 'relion' or 'warp'")
+
+                self.table = relion_df_to_xmipp_labels(table)
+                self.isTomo = True
+                self.tomoFormat = kind
+                self._finishRead()
+                return
 
         if readFrom == "Auto":
             try:
@@ -230,16 +276,128 @@ class XmippMetaData(object):
         if os.path.splitext(file_name)[1] in [".star", ".cs"]:
             self.table = relion_df_to_xmipp_labels(self.table)
 
+        self._finishRead()
+
+    def _finishRead(self):
+        '''
+        Shared tail of every read path: probe the binaries and pad the table with the
+        default columns that downstream code assumes are present.
+        '''
+        self._image_root = self._findImageRoot()
+
         try:
             self.binaries = True
             _ = self.getMetaDataImage(0)
         except (FileNotFoundError, KeyError):
             self.binaries = False
 
+            if self.isMetaDataLabel("image") and len(self):
+                sample = str(self.getMetadataItems(0, "image")[0])
+                warnings.warn(
+                    f"no image stack found for '{sample}'. RELION writes rlnImageName "
+                    f"relative to the project root; the root was looked for at the current "
+                    f"directory and at {self._source_dir} and its parents. Run from the "
+                    f"project root, or pass absolute paths.", RuntimeWarning)
+
         # Fill non-existing columns
         remain = set(self.DEFAULT_COLUMN_NAMES).difference(set(self.getMetaDataLabels()))
         for label in remain:
             self.table[label] = 0.0
+
+    def _findImageRoot(self, probe_rows=8):
+        '''
+        Locate the directory relative image paths are relative to.
+
+        RELION anchors rlnImageName at the project root, so the candidate roots are tried
+        against paths from the table and the first one where the stacks exist wins.
+
+            :returns: absolute directory to join relative image paths onto
+        '''
+        cwd = os.getcwd()
+        if not self.isMetaDataLabel("image") or not len(self):
+            return cwd
+
+        paths = []
+        for i in range(min(int(probe_rows), len(self))):
+            path = str(self.getMetadataItems(i, "image")[0]).split("@")[-1]
+            if not os.path.isabs(path):
+                paths.append(path)
+        if not paths:
+            return cwd
+
+        candidates = [cwd]
+        if self._source_dir is not None:
+            d = self._source_dir
+            # A job's star file sits at <root>/<JobType>/jobNNN/, so the root is two up
+            for _ in range(4):
+                candidates.append(d)
+                parent = os.path.dirname(d)
+                if parent == d:
+                    break
+                d = parent
+
+        for base in candidates:
+            if all(os.path.exists(os.path.join(base, p)) for p in paths):
+                return base
+        return cwd
+
+    def _resolveImagePath(self, path):
+        '''Absolute path of one stack referenced by the metadata.'''
+        if os.path.isabs(path):
+            return path
+        return os.path.join(self._image_root or os.getcwd(), path)
+
+    @staticmethod
+    def _sniffTomoKind(file_name, max_lines=5000):
+        '''
+        Header sniff for a tomography particles file, scanning the label declarations of
+        each data block separately. A Warp/M match is only a candidate and is confirmed
+        against the table, since its labels also occur in single-particle files.
+
+            :param file_name (string) --> Path to the STAR file
+            :returns: "relion", "warp", or None when this is not tomography metadata
+        '''
+        blocks = [[]]
+        columns, rows, tested, block = None, [], False, None
+        try:
+            with open(file_name, "r", errors="ignore") as f:
+                for i, line in enumerate(f):
+                    if i >= max_lines:
+                        break
+                    line = line.strip()
+                    if line.startswith("data_optimisation_set"):
+                        return "relion"
+                    if line.startswith("data_"):
+                        blocks.append([])
+                        tested = False
+                    elif line.startswith("_"):
+                        blocks[-1].append(line.split()[0][1:])
+                    elif line and not line.startswith(("#", "loop_", ";")):
+                        if columns is None and not tested:
+                            tested = True
+                            if has_warp_tilt_series_labels(blocks[-1]):
+                                columns, block = list(blocks[-1]), len(blocks)
+                        if block == len(blocks) and len(line.split()) == len(columns):
+                            rows.append(line.split())
+        except OSError:
+            return None
+
+        for labels in blocks:
+            # An optimisation set names the particles file; the block may be unnamed
+            if "rlnTomoParticlesFile" in labels:
+                return "relion"
+            if "rlnTomoName" in labels and (
+                    "rlnCenteredCoordinateZAngst" in labels or "rlnCoordinateZ" in labels):
+                return "relion"
+
+        if columns is None or not rows:
+            return None
+        table = pd.DataFrame(rows, columns=columns)
+        for name in ("rlnCoordinateX", "rlnCoordinateY"):
+            if name in table.columns:
+                table[name] = pd.to_numeric(table[name], errors="coerce")
+        label = next(c for c in ("rlnGroupName", "rlnGroupNumber") if c in columns)
+        return "warp" if _groups_are_tilt_series(table, label) else None
 
     def write(self, filename, overwrite=True, updateImagePaths=False):
         '''
@@ -256,13 +414,9 @@ class XmippMetaData(object):
             except ValueError as e:
                 index, file = "", image
 
-            # Image absolute path. A relative path is defined relative to the directory the
-            # metadata was read from (``_source_dir``), NOT the process CWD -- resolving it
-            # against CWD would silently point to the wrong stack whenever the program runs
-            # from elsewhere. Fall back to CWD only for in-memory metadata with no source.
+            # Relative paths resolve against the project root found at read time
             if not os.path.isabs(file):
-                base = self._source_dir if self._source_dir is not None else os.getcwd()
-                file = os.path.abspath(os.path.join(base, file))
+                file = os.path.abspath(self._resolveImagePath(file))
 
             # Get new relative path
             file = Path(file).resolve()
@@ -290,6 +444,25 @@ class XmippMetaData(object):
             table_to_write = self.table
 
         starfile.write(table_to_write, filename, overwrite=overwrite)
+
+        if os.path.splitext(filename)[1] == ".star":
+            self._stampRelionVersion(filename)
+
+    @staticmethod
+    def _stampRelionVersion(filename):
+        '''
+        Replace starfile's own "# Created by ..." header line with the "# version 30001"
+        line RELION itself writes, so downstream RELION/Scipion readers see a familiar file.
+        '''
+        with open(filename, "r") as f:
+            content = f.read()
+
+        first_line, _, rest = content.partition("\n")
+        if first_line.startswith("# Created by the starfile"):
+            content = "# version 30001\n" + rest
+
+            with open(filename, "w") as f:
+                f.write(content)
 
     def __del__(self):
         '''
@@ -400,7 +573,7 @@ class XmippMetaData(object):
         # of being stacked and then reordered
         images = None
         for key, values in stack_id.items():
-            ih = getImageHandler(key)
+            ih = getImageHandler(self._resolveImagePath(key))
             positions = np.asarray(stack_order[key])
 
             if len(ih) == len(values) == 1:
